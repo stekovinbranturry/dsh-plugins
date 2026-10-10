@@ -1,0 +1,161 @@
+/* 右上角的通知堆栈。类名一律 nt- 前缀，只加自己的节点，不碰 DSH 自己的样式。
+   按钮 / 标签 / 图标的观感由 primitives 自己的样式负责，这里只管布局与动效；
+   配色全走 --dsw-* 语义 token，浅色/深色主题自动跟随。
+   位置固定在右上角、z-index 压在最高层：DSH 自己的浮层是 100 / 1000 / 1100
+   （menu、modal、toast），它们都在 top-center，两者区域天然错开、不会叠。 */
+
+.nt-stack {
+  position: fixed;
+  right: 16px;
+  top: 16px;
+  z-index: 2147483000;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 340px;
+  max-width: calc(100vw - 32px);
+  pointer-events: none;
+}
+
+.nt-card {
+  pointer-events: auto;
+  box-sizing: border-box;
+  display: flex;
+  gap: 10px;
+  padding: 12px;
+  border-radius: var(--dsw-radius-lg);
+  /* 抬升浮层的配方，照 DSH 自己那三处用 prominent 的浮层对齐
+     （Menu 下拉、Modal 对话框、ImageLightbox）：
+     - 背景 bg-layer-2：Modal 对话框与 settings 卡片用的抬升层。
+       原来用的 bg-module-platform 是"凹陷的模块底"（浅色 #f5f6f7），语义正好相反。
+     - 阴影 elevation-prominent：elevation-panel 那档全 DSH 只有 HoverCard 在用，
+       是悬停预览的强度，不是浮层该有的。
+     - 描边整条交给 elevation 自带的那一层（ImageLightbox 就是显式 border: 0）：
+       颜色由主题在 body, body * 上默认绑成 border-l4(浅)/border-l3(深)。
+       原来又写了一条 0.5px border-l3，和 elevation 的描边叠成了双重描边；
+       也不用像菜单那样重绑到 border-l1 —— 那是给半透明毛玻璃面压轻描边用的。 */
+  border: 0;
+  background: var(--dsw-alias-bg-layer-2);
+  box-shadow: var(--dsw-elevation-prominent);
+  animation: nt-in 180ms ease-out;
+}
+
+/* 能跳回对话的卡片：整张可点。悬停不改视觉 —— 卡片是"提醒"不是"控件"，
+   鼠标扫过时忽明忽暗反而干扰阅读。 */
+.nt-card-open {
+  cursor: pointer;
+}
+
+/* 焦点环跟 shell 一致：--dsw-focus-ring-color 在正常主题下是 transparent，
+   所以退到 state-business-primary（与 shell 的 :focus-visible 同一套回退）。 */
+.nt-card-open:focus-visible {
+  outline: var(--dsw-focus-ring-width, 2px) solid
+    var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: 2px;
+}
+
+/* 从上方滑进来。不做淡入：透明度变化会让卡片在出现/消失时"闪"，只留位移。 */
+@keyframes nt-in {
+  from {
+    transform: translateY(-8px);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+/* 减弱动效偏好下只保留出现，不做位移动画 */
+@media (prefers-reduced-motion: reduce) {
+  .nt-card {
+    animation: none;
+  }
+}
+
+.nt-icon {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  /* 16px 图标居 16px 盒；margin 让它与类型标签那一行的行高基线对齐 */
+  margin-top: 2px;
+}
+
+.nt-main {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 类型标签 + 会话/工作区，挤在一行里，溢出换省略号 */
+.nt-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* Tag 的宽度不能被 flex 压扁（胶囊几何由 primitives 定死） */
+.nt-kind {
+  flex: none;
+}
+
+.nt-meta {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  line-height: 15px;
+  color: var(--dsw-alias-label-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nt-body {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 17px;
+  color: var(--dsw-alias-label-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 68px;
+  overflow: hidden;
+}
+
+.nt-report {
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-radius: var(--dsw-radius-sm);
+  /* 卡片现在是 bg-layer-2，内嵌块不能再用同色。这里要的是"凹陷的模块底"：
+     bg-module-platform 是浅色主题下少数能跟白底拉开层次的 token（#f5f6f7）——
+     浅色主题里 bg-layer-1/2/3 全是纯白，用它们做内嵌块会整块隐形。 */
+  background: var(--dsw-alias-bg-module-platform);
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* 动作按钮靠右：DSH 的对话框/卡片动作区都是右对齐的（Modal 的 footer 同款），
+   左边留给内容，按钮成组收在右下角。 */
+.nt-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+/* 关闭键保持紧凑：primitives 的 Button 最小 28px，对角落关闭键偏大。
+   只覆盖几何，观感（hover 底色、focus 环）仍由 Button 自己给。 */
+.nt-close {
+  align-self: flex-start;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  /* 圆形控件跟 DSH 的 pill/circle 约定一致（Tag / Pill / lightbox 关闭键都带这条） */
+  border-radius: 999px;
+  corner-shape: round;
+  color: var(--dsw-alias-label-tertiary);
+}

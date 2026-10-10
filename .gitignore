@@ -1,0 +1,24 @@
+# Dependencies and local caches
+node_modules/
+.pnpm-store/
+.turbo/
+.worktrees/
+
+# Build and test artifacts
+dist/
+coverage/
+*.tsbuildinfo
+*.tgz
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+*.pem
+
+# OS files and logs
+.DS_Store
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*

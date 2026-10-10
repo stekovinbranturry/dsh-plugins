@@ -1,0 +1,71 @@
+{
+  "name": "dsh-worktree",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/stekovinbranturry/dsh-plugins.git",
+    "directory": "packages/dsh-worktree"
+  },
+  "description": "DSH worktree plugin: pick an existing git worktree, or create one (from an existing branch or a brand-new branch), and open it in a new session.",
+  "type": "module",
+  "main": "./dist/host/index.js",
+  "exports": {
+    ".": {
+      "types": "./dist/host/index.d.ts",
+      "default": "./dist/host/index.js"
+    },
+    "./client": "./dist/client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-sidebar",
+        "@deepseek-ai/dsh-api-workspace-controller"
+      ]
+    }
+  },
+  "files": [
+    "dist/**",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "pnpm run clean && tsc -p tsconfig.build.json && tsdown",
+    "dev:client": "tsdown --watch",
+    "dev:host": "tsc -p tsconfig.build.json --watch",
+    "typecheck": "tsc --noEmit",
+    "verify": "node scripts/verify.mjs",
+    "test": "pnpm run build && pnpm run typecheck && pnpm run verify",
+    "install:profile": "dsh plugin --profile web add .",
+    "uninstall:profile": "dsh plugin --profile web remove dsh-worktree",
+    "prepack": "pnpm run build"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "~4.0.4",
+    "@deepseek-ai/dsh-tools": "^0.1.5-rc.2 || ^0.2.0-rc.1",
+    "@deepseek-ai/schemastery": "^3.18.4",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "~4.0.4",
+    "@deepseek-ai/dsh-tools": "0.2.0-rc.1",
+    "@deepseek-ai/schemastery": "^3.18.4",
+    "@types/node": "^22.20.2",
+    "@types/react": "~18.3.1",
+    "rolldown": "^1.2.8",
+    "tsdown": "^0.22.14",
+    "typescript": "^5.9.3",
+    "zod": "^4.4.3"
+  }
+}

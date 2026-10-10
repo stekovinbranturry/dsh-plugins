@@ -1,0 +1,728 @@
+/* 侧边栏底部的 worktree 入口 + 设置弹窗形态的居中弹窗。所有类名带 wt- 前缀，不与 DSH
+   自己的样式或别的插件撞名（只加自己的节点，不注入、不覆盖别人的样式）。
+
+   尺寸与颜色都抄 DSH 自己的实现，不自己发明：
+   - 入口（.wt-entry）= 官方 settings 触发器（ui-settings-general 的 SettingsRoot.module.css）：
+     height 42 / radius var(--dsw-radius-md) / padding 0 10px 0 8px / gap 8 / font-size 14 /
+     line-height 22，图标 16px。窄轨 36×36 但**圆角不变**：官方那条 rail 规则只覆盖
+     flex/justify/gap/width/height/margin/padding，不覆盖 border-radius，所以收起态也是
+     12px 圆角矩形（--dsw-radius-md），不是圆形
+   - 弹窗外壳（.wt-overlay/.wt-mask/.wt-panel/.wt-nav*/.wt-content/.wt-header/.wt-options）
+     = 官方设置弹窗本身：遮罩 + 居中面板 800 宽 / radius 32 / 阴影 elevation-prominent，
+     左侧 188 导航栏（标题 16/500、导航项 40 高 / radius 12），右侧 header 54 高 +
+     可滚动 options（padding 0 24px 24px）
+   - 表单与列表（.wt-input / .wt-btn / .wt-row-card / .wt-empty-box）= ui-settings-models：
+     输入框 height 32 / radius 8 / .5px border-l4，按钮 36 高 / radius 18（行内小按钮
+     28 高 / radius 14），行卡片 .5px border-l4 / radius 16 / padding 12px 14px
+   - 颜色全走 --dsw-alias-* 语义 token，浅色/深色主题自动跟随 */
+
+.wt-anchor {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  min-width: 0;
+}
+
+.wt-anchor-rail {
+  flex: none;
+}
+
+/* ── 入口 ─────────────────────────────────────────────────────────────── */
+
+.wt-entry {
+  box-sizing: border-box;
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  width: auto;
+  min-width: 0;
+  height: 42px;
+  margin: 0;
+  padding: 0 10px 0 8px;
+  overflow: hidden;
+  border: none;
+  border-radius: var(--dsw-radius-md, 12px);
+  background: none;
+  color: var(--dsw-alias-label-primary, #111827);
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 22px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.wt-entry:hover {
+  background: var(--dsw-alias-interactive-bg-hover, rgba(127, 127, 127, 0.12));
+}
+
+.wt-entry-active {
+  background: var(--dsw-alias-interactive-bg-hover, rgba(127, 127, 127, 0.12));
+  color: var(--dsw-alias-brand-primary, #4c5dff);
+}
+
+.wt-entry-rail {
+  flex: none;
+  justify-content: center;
+  gap: 0;
+  width: 36px;
+  height: 36px;
+  margin: 0;
+  padding: 0;
+  /* 官方 rail 不覆盖圆角：仍是 .wt-entry 的 --dsw-radius-md，收起态也是圆角矩形 */
+  border-radius: var(--dsw-radius-md, 12px);
+}
+
+.wt-entry-icon {
+  flex: none;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.wt-entry-rail .wt-entry-icon {
+  font-size: 18px;
+}
+
+.wt-entry-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── 弹窗外壳（= 设置弹窗） ───────────────────────────────────────────── */
+
+.wt-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.wt-mask {
+  position: absolute;
+  inset: 0;
+  background: var(--dsw-alias-bg-mask-1, rgba(0, 0, 0, 0.4));
+  backdrop-filter: var(--dsw-mask-blur, blur(2px));
+}
+
+/* 高度固定，与设置弹窗一致：min(800px, 100vh - 48px)。内容由 .wt-options 内部滚动，
+   面板本身不随内容长短伸缩 */
+.wt-panel {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  box-sizing: border-box;
+  width: 800px;
+  max-width: calc(100vw - 48px);
+  height: min(800px, calc(100vh - 48px));
+  overflow: hidden;
+  border-radius: 32px;
+  background: var(--dsw-alias-bg-layer-2, #fff);
+  color: var(--dsw-alias-label-primary, #111827);
+  box-shadow: var(--dsw-elevation-prominent, 0 16px 48px rgba(0, 0, 0, 0.24));
+  --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2, rgba(127, 127, 127, 0.28));
+  --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2, rgba(127, 127, 127, 0.42));
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 22px;
+  text-align: left;
+}
+
+.wt-nav {
+  display: flex;
+  box-sizing: border-box;
+  flex: none;
+  flex-direction: column;
+  gap: 18px;
+  width: 188px;
+  padding: 22px 12px 0;
+}
+
+.wt-nav-title {
+  padding: 0 12px;
+  color: var(--dsw-alias-label-primary, #111827);
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 24px;
+}
+
+.wt-nav-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.wt-nav-cell {
+  display: flex;
+  box-sizing: border-box;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 9px 16px 9px 12px;
+  border: none;
+  border-radius: 12px;
+  background: none;
+  color: var(--dsw-alias-label-primary, #111827);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 22px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.wt-nav-cell > svg {
+  flex: none;
+}
+
+.wt-nav-cell:hover {
+  background: var(--dsw-specific-sidebar-nav-item-hover, rgba(127, 127, 127, 0.12));
+}
+
+.wt-nav-cell-active {
+  background: var(--dsw-specific-sidebar-nav-item-active, rgba(127, 127, 127, 0.16));
+}
+
+.wt-nav-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wt-content {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.wt-header {
+  display: flex;
+  box-sizing: border-box;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px 8px 10px;
+}
+
+/* 顶栏上的工作区选择：标题右边、不带 label，靠右（margin-left:auto）。
+   样式照 DSH 自己的工作区选择器：无边框 pill 触发器 + 浮层菜单（单选，无搜索框） */
+.wt-header-workspace {
+  flex: none;
+  min-width: 0;
+  margin-left: auto;
+  position: relative;
+}
+
+/* —— 触发器：DSH ModelSelect/工作区选择器那枚 28px 圆角 pill —— */
+.wt-ws-trigger {
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: min(360px, 45cqw);
+  height: 28px;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+  background: none;
+  border: none;
+  border-radius: 24px;
+  outline: none;
+  align-items: center;
+  gap: 4px;
+  padding: 0 4px 0 8px;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 20px;
+  display: flex;
+}
+
+.wt-ws-trigger:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.wt-ws-trigger-label {
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* 触发器左侧的文件夹图标（跟 DSH 工作区选择器一致） */
+.wt-ws-trigger-icon {
+  width: 16px;
+  height: 16px;
+  color: var(--dsw-alias-label-secondary);
+  flex: none;
+  justify-content: center;
+  align-items: center;
+  display: inline-flex;
+}
+
+/* 箭头：固定成 14×14 的居中盒，翻转以自身中心为轴（不然 rotate 会绕容器底边转） */
+.wt-ws-chevron {
+  width: 14px;
+  height: 14px;
+  color: var(--dsw-alias-label-caption);
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  transition: transform 0.12s;
+}
+
+.wt-ws-chevron svg {
+  display: block;
+}
+
+.wt-ws-chevron-open {
+  transform: rotate(180deg);
+  transform-origin: 50% 50%;
+}
+
+.wt-header-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* 关窗与刷新都是设置弹窗 header 里的 28×28 圆形按钮 */
+.wt-close,
+.wt-icon-btn {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 28px;
+  background: none;
+  color: var(--dsw-alias-label-primary, #111827);
+  line-height: 0;
+  cursor: pointer;
+}
+
+.wt-close svg,
+.wt-icon-btn svg {
+  display: block;
+}
+
+.wt-close:hover,
+.wt-icon-btn:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover, rgba(127, 127, 127, 0.12));
+}
+
+.wt-icon-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.wt-options {
+  flex: 1;
+  min-height: 0;
+  padding: 0 24px 16px;
+  overflow-y: auto;
+}
+
+/* 动作按钮的落点：面板高度固定，footer 不参与滚动，按钮永远在最下面 */
+.wt-footer {
+  display: flex;
+  box-sizing: border-box;
+  flex: none;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 24px 20px;
+  border-top: 0.5px solid var(--dsw-alias-border-l2, rgba(127, 127, 127, 0.2));
+}
+
+.wt-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* ── 分区与小字 ───────────────────────────────────────────────────────── */
+
+.wt-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 720px;
+  color: var(--dsw-alias-label-primary, #111827);
+}
+
+.wt-title {
+  margin: 0;
+  color: var(--dsw-alias-label-primary, #111827);
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 24px;
+}
+
+/* 工作区切换：两个分区共用的目标仓库，选过之后就按选的来 */
+.wt-workspace {
+  margin-bottom: 16px;
+}
+
+.wt-empty {
+  margin: 0;
+  color: var(--dsw-alias-label-tertiary, #9ca3af);
+  font-size: 14px;
+  line-height: 22px;
+}
+
+.wt-hint {
+  margin: 0;
+  color: var(--dsw-alias-label-tertiary, #9ca3af);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.wt-empty-box {
+  margin: 0;
+  padding: 12px;
+  border: 1px dashed var(--dsw-alias-border-l3, rgba(127, 127, 127, 0.35));
+  border-radius: 8px;
+  color: var(--dsw-alias-label-secondary, #6b7280);
+  font-size: 13px;
+  line-height: 20px;
+  text-align: center;
+}
+
+/* ── 创建方式切换（已有分支 / 新建分支） ─────────────────────────────── */
+
+/* 尺寸抄 DSH 自己的分段控件：整块 32 高、圆角 8，选中项用 hover 底 + 主色字 */
+.wt-seg {
+  display: flex;
+  box-sizing: border-box;
+  gap: 2px;
+  align-self: flex-start;
+  min-width: 240px;
+  padding: 2px;
+  border: 0.5px solid var(--dsw-alias-border-l4, rgba(127, 127, 127, 0.4));
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1, #fff);
+}
+
+.wt-seg-btn {
+  flex: 1;
+  height: 26px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary, #6b7280);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 20px;
+  cursor: pointer;
+}
+
+.wt-seg-btn:hover:not(.wt-seg-btn-active) {
+  background: var(--dsw-alias-interactive-bg-hover, rgba(127, 127, 127, 0.12));
+}
+
+.wt-seg-btn-active {
+  background: var(--dsw-alias-interactive-bg-hover-solid, rgba(127, 127, 127, 0.14));
+  color: var(--dsw-alias-label-primary, #111827);
+  font-weight: 600;
+}
+
+/* ── 表单：标签在上、控件在下（设置弹窗的字段就是竖排） ─────────────────
+   控件 `width:100%` 自动撑满弹窗内容区，工作区下拉/起点下拉等所有控件同宽同高 */
+
+.wt-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.wt-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.wt-label {
+  color: var(--dsw-alias-label-secondary, #6b7280);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+}
+
+.wt-input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  padding: 0 10px;
+  border: 0.5px solid var(--dsw-alias-border-l4, rgba(127, 127, 127, 0.4));
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1, #fff);
+  color: var(--dsw-alias-label-primary, #111827);
+  font: inherit;
+  font-size: 14px;
+  line-height: 22px;
+}
+
+.wt-input::placeholder {
+  color: var(--dsw-alias-label-dimmed, #9ca3af);
+}
+
+.wt-input:focus {
+  outline: none;
+  border-color: var(--dsw-alias-brand-primary, #4c5dff);
+}
+
+.wt-input:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* ── 分支下拉（可搜索） ───────────────────────────────────────────────── */
+
+.wt-combo {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.wt-combo > .wt-input {
+  flex: none;
+}
+
+/* 分支/起点下拉弹层：和 DSH 的菜单（工作区选择器同款）一致。
+   0.1.7 起 --dsw-specific-menu 是**带 alpha** 的色（浅色 #f8f9fa94 / 深色 #30313680），
+   只铺 background 会整块透光；官方 .list 是配 backdrop-filter 把它磨成毛玻璃的，
+   这里必须跟着加上 —— 这是手写浮层唯一漏掉的那一条（工作区选择已改用平台 Menu） */
+.wt-combo-list {
+  display: flex;
+  flex-direction: column;
+  max-height: min(360px, 40vh);
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 4px;
+  border: 0;
+  border-radius: 20px;
+  background: var(--dsw-specific-menu, var(--dsw-alias-bg-layer-2, #fff));
+  backdrop-filter: var(--dsw-menu-backdrop-filter, blur(40px) saturate(150%));
+  --dsw-elevation-stroke-color: var(--dsw-alias-border-l1);
+  box-shadow: var(--dsw-elevation-prominent);
+}
+
+.wt-combo-item {
+  display: flex;
+  box-sizing: border-box;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  min-height: 38px;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--dsw-alias-label-primary, #111827);
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 20px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.wt-combo-item:hover:not(:disabled),
+.wt-combo-item-active {
+  background: var(--dsw-alias-interactive-bg-hover, rgba(127, 127, 127, 0.12));
+}
+
+.wt-combo-item:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.wt-combo-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--dsw-font-markdown-code-font-family, ui-monospace, SFMono-Regular, Menlo, monospace);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wt-combo-tag {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary, #9ca3af);
+  font-size: 12px;
+}
+
+/* 当前选中分支的勾（和工作区菜单一致，靠右） */
+.wt-combo-check {
+  color: var(--dsw-alias-label-primary);
+  flex: 0 0 18px;
+  place-items: center;
+  display: grid;
+}
+
+.wt-combo-empty {
+  padding: 10px;
+  color: var(--dsw-alias-label-tertiary, #9ca3af);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+/* ── 按钮 ─────────────────────────────────────────────────────────────── */
+
+.wt-btn {
+  display: inline-flex;
+  box-sizing: border-box;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 36px;
+  padding: 0 14px;
+  border: none;
+  border-radius: 18px;
+  font: inherit;
+  font-size: 14px;
+  line-height: 22px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.wt-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.wt-btn-primary {
+  background: var(--dsw-alias-button-primary-fill, var(--dsw-alias-brand-primary, #4c5dff));
+  color: var(--dsw-alias-label-primary-foreground, #fff);
+}
+
+.wt-btn-primary:hover:not(:disabled) {
+  background: var(--dsw-alias-button-primary-hover, var(--dsw-alias-brand-primary, #4c5dff));
+}
+
+.wt-btn-secondary {
+  border: 0.5px solid var(--dsw-alias-border-l3, rgba(127, 127, 127, 0.35));
+  background: transparent;
+  color: var(--dsw-alias-label-primary, #111827);
+}
+
+.wt-btn-secondary:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover-solid, rgba(127, 127, 127, 0.12));
+}
+
+/* 行内动作：设置弹窗的行卡片用的就是 28 高 / radius 14 的小号次要按钮 */
+.wt-btn-sm {
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 14px;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+/* ── 已有 worktree 列表（= 设置弹窗的行卡片） ────────────────────────── */
+
+.wt-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.wt-row-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 0.5px solid var(--dsw-alias-border-l4, rgba(127, 127, 127, 0.4));
+  border-radius: 16px;
+}
+
+.wt-row-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* 每行左侧的 icon（worktree / branch / 文件夹） */
+.wt-row-icon {
+  width: 16px;
+  height: 16px;
+  color: var(--dsw-alias-label-secondary, #6b7280);
+  flex: none;
+  justify-content: center;
+  align-items: center;
+  display: inline-flex;
+}
+
+.wt-row-name {
+  color: var(--dsw-alias-label-primary, #111827);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 22px;
+}
+
+/* 分支名单独一行（和 worktree 名分开），等宽小字 */
+.wt-row-branch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--dsw-alias-label-secondary, #6b7280);
+  font-family: var(--dsw-font-markdown-code-font-family, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.wt-row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.wt-row-path {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--dsw-alias-label-tertiary, #9ca3af);
+  font-family: var(--dsw-font-markdown-code-font-family, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+/* 行内文本，超出省略 */
+.wt-row-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── 提示 / 错误 ──────────────────────────────────────────────────────── */
+
+.wt-msg {
+  margin-bottom: 12px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: var(--dsw-alias-bg-module-platform, rgba(127, 127, 127, 0.08));
+  color: var(--dsw-alias-label-primary, #111827);
+  font-size: 13px;
+  line-height: 20px;
+  word-break: break-word;
+}

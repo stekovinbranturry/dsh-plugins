@@ -1,0 +1,17 @@
+{
+  "name": "dsh-plugins",
+  "private": true,
+  "description": "Independent worktree and notification plugins for DeepSeek Harness (DSH).",
+  "license": "MIT",
+  "scripts": {
+    "build": "pnpm -r run build",
+    "typecheck": "pnpm -r run typecheck",
+    "test": "pnpm -r run test",
+    "dev": "pnpm -r --parallel --stream run /^dev:/",
+    "clean": "pnpm -r run clean"
+  },
+  "packageManager": "pnpm@11.25.0",
+  "engines": {
+    "node": ">=24"
+  }
+}

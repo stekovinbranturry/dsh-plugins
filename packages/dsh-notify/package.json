@@ -1,0 +1,70 @@
+{
+  "name": "dsh-notify",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/stekovinbranturry/dsh-plugins.git",
+    "directory": "packages/dsh-notify"
+  },
+  "description": "DSH notify plugin: browser notifications, in-page toast, sound, tab-title badge and webhook when a session finishes, needs approval, or waits for an answer.",
+  "type": "module",
+  "main": "./dist/host/index.js",
+  "exports": {
+    ".": {
+      "types": "./dist/host/index.d.ts",
+      "default": "./dist/host/index.js"
+    },
+    "./client": "./dist/client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": []
+    }
+  },
+  "files": [
+    "dist/**",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "pnpm run clean && tsc -p tsconfig.build.json && tsdown",
+    "dev:client": "tsdown --watch",
+    "dev:host": "tsc -p tsconfig.build.json --watch",
+    "typecheck": "tsc --noEmit",
+    "verify": "node scripts/verify.mjs",
+    "test": "pnpm run build && pnpm run typecheck && pnpm run test:client && pnpm run verify",
+    "install:profile": "dsh plugin --profile web add .",
+    "uninstall:profile": "dsh plugin --profile web remove dsh-notify",
+    "prepack": "pnpm run build",
+    "test:client": "tsdown --config tsdown.test.config.ts"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "~4.0.4",
+    "@deepseek-ai/schemastery": "^3.18.2"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "~4.0.4",
+    "@deepseek-ai/dsh-client-connection": "0.2.0-rc.1",
+    "@deepseek-ai/dsh-host-webserver": "0.2.0-rc.1",
+    "@deepseek-ai/schemastery": "^3.18.2",
+    "@types/node": "^22.20.2",
+    "@types/react": "~18.3.1",
+    "@types/react-dom": "~18.3.0",
+    "react": "~18.3.1",
+    "react-dom": "~18.3.1",
+    "rolldown": "^1.2.8",
+    "tsdown": "^0.22.14",
+    "typescript": "^5.9.3"
+  }
+}

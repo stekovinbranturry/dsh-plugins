@@ -84,6 +84,11 @@ export interface ErrorResult {
   error: string
   detail?: string
   warnings?: string[]
+  /**
+   * 失败之前已经有副作用落下了（删除 worktree 才会用到）：归档会话与注销工作区登记在
+   * 删目录之前，删目录那一步失败时它们已经生效了 —— 这时不能说「什么都没变」。
+   */
+  partial?: boolean
 }
 
 export interface CreateResult {
@@ -99,5 +104,24 @@ export interface OpenResult {
   title: string
   path: string
   branch: string | null
+  warnings: string[]
+}
+
+export interface RemoveResult {
+  ok: true
+  name: string
+  path: string
+  /** 这个 worktree 检出的分支；detached 时为 null */
+  branch: string | null
+  /** `remove` = 目录还在，走 git worktree remove；`prune` = 目录本来就不在了，只清元数据 */
+  how: 'remove' | 'prune'
+  /** 这次真正归档掉的会话数 */
+  archived: number
+  /** 本来就已经归档过、这次跳过的会话数 */
+  alreadyArchived: number
+  /** 真正删掉的本地分支；没删成（detached / 没勾 / git 拒绝）时为 null */
+  branchDeleted: string | null
+  /** 真正删掉的远端分支；没删成时为 null */
+  remoteDeleted: string | null
   warnings: string[]
 }

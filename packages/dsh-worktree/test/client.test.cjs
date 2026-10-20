@@ -84,8 +84,8 @@ ok(source.indexOf('sidebar.footer.action') > 0, 'the sidebar footer slot name is
 ok(source.indexOf('conversation.session.header') < 0, 'the session header slot is gone')
 ok(source.indexOf('dsh-worktree:sidebar-entry') > 0, 'the slot registration id is in the bundle')
 ok(source.indexOf('/api/dsh-worktree.') > 0, 'the host API namespace is in the bundle')
-ok(source.indexOf('/remove') < 0, 'the client never calls the removed route')
-ok(source.indexOf('worktree_prune') < 0, 'the client never calls prune')
+ok(source.indexOf('worktree-dirty') > 0, 'the client knows the dirty-worktree refusal')
+ok(source.indexOf('worktree_prune') < 0, 'the client never calls prune: a vanished directory goes through the remove route')
 ok(source.indexOf('eval(') < 0, 'no eval in the bundle')
 
 // ── minimal React + element-tree expander ─────────────────────────────────
@@ -93,6 +93,7 @@ let stateIndex = 0
 let presets = []
 /** 记录 useState 的 setter 调用：状态变化没有真实重渲染，只能这样断言 handler 的意图 */
 let stateSets = []
+let recordedEffects = null
 const ReactShim = {
   createElement: (type, props, ...children) => ({
     __el: true,
@@ -109,7 +110,9 @@ const ReactShim = {
       },
     ]
   },
-  useEffect() {},
+  useEffect(effect, deps) {
+    if (recordedEffects !== null) recordedEffects.push({ effect, deps })
+  },
   useRef() {
     return { current: null }
   },
@@ -136,15 +139,21 @@ const JsxRuntimeShim = {
   },
 }
 /**
- * 平台 primitives 的替身。只垫本插件用到的两个导出：Menu、Tooltip。
+ * 平台 primitives 的替身：Button、Menu、Tooltip、Toast。
  * 真 Menu 会把 anchor 原样渲染在原地、再在 body 里挂浮层；这里把 anchor 放进 children，
  * 好让元素树走查照旧能找到触发器，行本身按 props.items 断言。
  * Tooltip 同理：真件在 hover 时才挂浮层，这里只留一个可断言的 tooltip 节点（label 是 props，
  * 不落成文本，否则会污染 allText 的窄轨断言）。
  */
 const PrimitivesShim = {
+  Button({ variant, size, icon, ...props }) {
+    return jsxNode('button', props)
+  },
   Menu(props) {
     return jsxNode('Menu', Object.assign({}, props, { children: props.anchor }))
+  },
+  Toast(props) {
+    return jsxNode('toast', { ...props, children: props.text })
   },
   Tooltip(props) {
     return jsxNode('tooltip', {
@@ -152,6 +161,23 @@ const PrimitivesShim = {
       disabled: props.disabled,
       children: props.children,
     })
+  },
+  /**
+   * 删除确认框用的三个件。Modal 真件是 portal，这里原样渲染成节点，好让元素树走查
+   * 找得到框里的路径/提示/勾选/错误；Checkbox 的 label 留在 props 上（跟 Tooltip 一个处理），
+   * 断言看 props 与 checked，不污染 allText。
+   */
+  Modal(props) {
+    return jsxNode('Modal', Object.assign({}, props, { children: props.children }))
+  },
+  Checkbox(props) {
+    return jsxNode('Checkbox', props)
+  },
+  IconTrashOutlineRegular(props) {
+    return jsxNode('trash', props)
+  },
+  IconWarningTriangleOutlineRegular(props) {
+    return jsxNode('warn', props)
   },
 }
 const moduleExports = config.factory((id) => {
@@ -198,6 +224,7 @@ moduleExports.apply(ctx)
 eq(styleNodes.length, 1, 'styles were inserted once')
 eq(styleNodes[0].attributes['data-dsh-worktree'], '', 'style node is tagged for cleanup')
 ok(styleNodes[0].textContent.indexOf('.wt-panel') > 0, 'the inserted style node carries the panel css')
+ok(/\[role=['"]alert['"]\]:has\(\.wt-toast-lines\)\s*\{[^}]*white-space:\s*pre-line/.test(styleNodes[0].textContent), 'the built toast styles preserve explicit line breaks only for our marker')
 eq(injected.length, 1, 'exactly one slot inject')
 eq(injected[0], SLOT, 'injects the root-level sidebar footer slot')
 eq(registrations.length, 1, 'one slot registration')
@@ -306,7 +333,7 @@ function standardProps(workspaces, sessions, wide = true) {
 /**
  * 状态顺序（与组件里的 useState 顺序一一对应）。
  * 主组件：open, section, workspaceId, data, busy, message, mode, branch, name, nameTouched,
- *         newBranch, base
+ *         newBranch, base, deleteTarget, deleting, deleteFailure, deleteForce, deleteBranch, deleteRemoteBranch
  * 之后是工作区选择（单选下拉）自己的两个状态：open, active
  * 再之后是分支/起点下拉的三个状态：query, listOpen, active
  */
@@ -321,10 +348,19 @@ const S_BRANCH = 7
 const S_NAME = 8
 const S_NEW_BRANCH = 10
 const S_BASE = 11
-const S_WS_OPEN = 12
-const S_QUERY = 13
-const S_LIST_OPEN = 14
-const S_ACTIVE = 15
+const S_DELETE_TARGET = 12
+const S_DELETING = 13
+const S_DELETE_FAILURE = 14
+const S_DELETE_FORCE = 15
+const S_DELETE_BRANCH = 16
+const S_DELETE_REMOTE = 17
+const S_REMOTE_CHECK = 18
+const S_WS_OPEN = 19
+const S_QUERY = 20
+const S_LIST_OPEN = 21
+const S_ACTIVE = 22
+/** 删除相关的 7 个状态：没开确认框时全关，远端查询也尚未开始。 */
+const DELETE_STATES = [null, false, null, false, false, false, null]
 /** 工作区选择只有一个状态：菜单开没开（行交给平台的 Menu，我们不再自持光标） */
 const WS_COMBO = [false]
 /**
@@ -332,12 +368,31 @@ const WS_COMBO = [false]
  * 最后是分支/起点下拉 3 个。rest 里前 9 个是主组件（短数组省略的 newBranch/base 补回初始值），
  * 剩下的是分支下拉状态。
  */
-const preset = (open, section, rest) => [open, section, null, ...mainStates(rest), ...WS_COMBO, ...rest.slice(9)]
+const preset = (open, section, rest) => [
+  open,
+  section,
+  null,
+  ...mainStates(rest),
+  ...DELETE_STATES,
+  ...WS_COMBO,
+  ...rest.slice(9),
+]
 const presetWs = (workspaceId, open, section, rest) => [
   open,
   section,
   workspaceId,
   ...mainStates(rest),
+  ...DELETE_STATES,
+  ...WS_COMBO,
+  ...rest.slice(9),
+]
+/** 删除确认框打开时的预置：del 是那 7 个删除状态，未给的位按默认值补 */
+const presetDelete = (del, rest) => [
+  true,
+  'list',
+  null,
+  ...mainStates(rest),
+  ...[...del, ...DELETE_STATES.slice(del.length)],
   ...WS_COMBO,
   ...rest.slice(9),
 ]
@@ -447,8 +502,8 @@ ok(labels.indexOf('创建并进入新会话') >= 0, 'primary create button')
 ok(labels.indexOf('只创建') >= 0, 'plain create button')
 ok(labels.indexOf('已有分支') >= 0, 'the mode switch offers existing branches')
 ok(labels.indexOf('新建分支') >= 0, 'the mode switch offers a new branch')
-ok(labels.indexOf('删除') < 0, 'there is no delete button any more')
-ok(labels.indexOf('清理 stale 记录') < 0, 'there is no prune button any more')
+ok(labels.indexOf('删除') < 0, 'the create section carries no delete button (deletion lives in the list section)')
+ok(labels.indexOf('清理 stale 记录') < 0, 'a vanished worktree is cleaned through the delete flow, not a separate prune button')
 // 分区切换：同一时刻只渲染当前分区（设置弹窗就是这么做的），导航在前、内容在后
 const sections = flatten(panel)
   .filter((e) => e.kind === 'element' && typeof e.props.className === 'string' && e.props.className.indexOf('wt-section') >= 0)
@@ -595,9 +650,9 @@ ok(openRow.className.indexOf('wt-btn-secondary') >= 0 && openRow.className.index
 console.log('\n== header icons ==')
 // 弹窗图标全部用 16px 的 SVG 而不是文字字形：字形在 28px 按钮里看着明显偏小
 const svgs = flatten(panel).filter((e) => e.kind === 'element' && e.type === 'svg')
-eq(svgs.length, 7, 'refresh + close + two nav cells + trigger folder + trigger chevron + entry worktree draw svg icons')
-eq(svgs.filter((e) => e.props.width === '16' && e.props.height === '16').length, 5, 'the 16px icons are 16x16 like the rest of the app')
-eq(svgs.filter((e) => e.props.viewBox === '0 0 16 16').length, 4, 'the 16-box icons use the 16-box viewBox (branch uses the 24-box lucide glyph)')
+eq(svgs.length, 8, 'fetch + refresh + close + two nav cells + trigger folder + trigger chevron + entry worktree draw svg icons')
+eq(svgs.filter((e) => e.props.width === '16' && e.props.height === '16').length, 6, 'the 16px icons are 16x16 like the rest of the app')
+eq(svgs.filter((e) => e.props.viewBox === '0 0 16 16').length, 4, 'the Git icons use the 24-box viewBox')
 const iconPaths = flatten(panel).filter((e) => e.kind === 'element' && e.type === 'path')
 ok(iconPaths.length >= 5, 'the icons are drawn with paths', String(iconPaths.length))
 ok(
@@ -783,10 +838,10 @@ const tick = () => new Promise((resolve) => setTimeout(resolve, 0))
 sandbox.fetch = async (url, options) => {
   const body = JSON.parse(options.body)
   fetchCalls.push({ url, body })
-  if (url.indexOf('/create') >= 0) {
+  if (url.endsWith('.create')) {
     return { ok: true, json: async () => ({ ok: true, item: { name: body.name, path: '/p', branch: 'b' }, warnings: [] }) }
   }
-  if (url.indexOf('/context') >= 0) {
+  if (url.endsWith('.context') || url.endsWith('.fetch')) {
     return { ok: true, json: async () => ({ ok: true, repoRoot: '/repo', worktreeRoot: '/repo/.worktrees', items: [], branches: [], warnings: [] }) }
   }
   return {
@@ -867,9 +922,428 @@ async function clickChecks() {
     'the panel stays open when it could not switch',
   )
   ctx.get = realGet
+
+  console.log('\n== manual fetch and ordinary refresh ==')
+  const fetchButton = (tree) => flatten(tree).find((e) => e.kind === 'element' && e.type === 'button' && e.props['aria-label'] === '拉取远端分支')
+  eq(allText(fetchButton(panel).children), '', 'fetch button is icon-only')
+  eq(fetchButton(panel).props.className, 'wt-icon-btn', 'fetch uses the existing compact icon-button style')
+  eq(fetchButton(panel).props.title, undefined, 'fetch has no native title tooltip')
+  const fetchTooltip = flatten(panel).find((e) => e.kind === 'element' && e.type === 'tooltip' && e.props.label === '拉取远端分支（origin），不合并当前分支')
+  ok(fetchTooltip && fetchButton(fetchTooltip.children), 'fetch button is wrapped in the platform Tooltip')
+  const pullIcon = flatten(fetchButton(panel).children)
+  eq(pullIcon.filter((e) => e.kind === 'element' && e.type === 'circle').length, 2, 'Git pull icon has two commit nodes')
+  ok(pullIcon.some((e) => e.kind === 'element' && e.type === 'path' && e.props.d === 'M5 9v6M13 6h3a3 3 0 0 1 3 3v6m-3-3 3 3 3-3'), 'Git pull icon has a branch with a downward arrow')
+  eq(fetchButton(panel).props.disabled, false, 'manual fetch is enabled for a selected repo')
+  eq(fetchButton(noRepo).props.disabled, true, 'manual fetch is disabled without a repo')
+  stateIndex = 0
+  presets = preset(true, 'create', [DATA, true, '正在拉取 origin 的远端分支…', 'existing', 'feature/local-only', 'local', true])
+  const busyPanel = expand(registrations[0].component(standardProps(REPO_WORKSPACES, REPO_SESSIONS)))
+  eq(fetchButton(busyPanel).props.disabled, true, 'manual fetch cannot be repeated while busy')
+  eq(createButton(busyPanel).props.disabled, true, 'create is disabled while fetching')
+  const progressToast = flatten(busyPanel).find((e) => e.kind === 'element' && e.type === 'toast')
+  eq(progressToast.props.text, '正在拉取 origin 的远端分支…', 'fetch progress uses the platform Toast')
+  ok(!flatten(busyPanel).some((e) => e.kind === 'element' && e.props.className === 'wt-msg'), 'status does not occupy panel space')
+  stateSets = []
+  progressToast.props.onDone()
+  eq(stateSets.find((set) => set.index === S_MESSAGE).value, null, 'Toast completion clears the message')
+  ok(!stateSets.some((set) => set.index === S_BUSY), 'Toast expiration cannot unlock the pending operation')
+
+  const normalFetch = sandbox.fetch
+  const addedBranch = { name: 'origin/feature/new-on-server', kind: 'remote', localName: 'feature/new-on-server', inWorktree: null }
+  const fetchedData = { ...DATA, branches: [...DATA.branches, addedBranch], warnings: [] }
+  sandbox.fetch = async (url, options) => {
+    fetchCalls.push({ url, body: JSON.parse(options.body) })
+    return { ok: true, json: async () => fetchedData }
+  }
+  stateSets = []
+  fetchCalls.length = 0
+  fetchButton(panel).props.onClick()
+  await tick()
+  eq(fetchCalls.length, 1, 'manual fetch sends exactly one request')
+  eq(fetchCalls[0].url, '/api/dsh-worktree.fetch', 'the button calls the dedicated write endpoint')
+  eq(fetchCalls[0].body.repoPath, '/repo', 'fetch targets the selected repo')
+  eq(fetchCalls[0].body.sessionId, 's1', 'fetch carries the caller session for sandbox checks')
+  eq(stateSets.find((set) => set.index === S_DATA).value, fetchedData, 'the fetched context replaces the branch list')
+  eq(stateSets.find((set) => set.index === S_BRANCH).value, 'feature/local-only', 'fetch preserves a still-existing selection')
+  eq(stateSets.find((set) => set.index === S_BASE).value, 'HEAD', 'fetch preserves the HEAD base')
+  eq(stateSets.filter((set) => set.index === S_MESSAGE).at(-1).value, '已拉取 origin 的远端分支', 'fetch success is confirmed')
+  eq(stateSets.filter((set) => set.index === S_BUSY).at(-1).value, false, 'fetch releases the busy state')
+
+  // 同一份新数据驱动「分支」和「起点」下拉。
+  stateIndex = 0
+  presets = preset(true, 'create', [fetchedData, false, null, 'existing', '', '', false, '', 'HEAD', 'new-on-server', true, 0])
+  const refreshedPanel = expand(registrations[0].component(standardProps(REPO_WORKSPACES, REPO_SESSIONS)))
+  ok(allText(refreshedPanel).includes(addedBranch.name), 'the new remote branch appears in the branch picker')
+  stateIndex = 0
+  presets = preset(true, 'create', [fetchedData, false, null, 'new', '', '', false, 'feature/new', 'HEAD', 'new-on-server', true, 0])
+  const refreshedBase = expand(registrations[0].component(standardProps(REPO_WORKSPACES, REPO_SESSIONS)))
+  ok(allText(refreshedBase).includes(addedBranch.name), 'the new remote branch appears in the base picker')
+
+  fetchCalls.length = 0
+  const refreshButton = flatten(panel).find((e) => e.kind === 'element' && e.type === 'button' && e.props.title === '刷新')
+  refreshButton.props.onClick()
+  await tick()
+  eq(fetchCalls[0].url, '/api/dsh-worktree.context', 'ordinary refresh remains a read-only context request')
+
+  sandbox.fetch = async () => ({ ok: true, json: async () => ({ ok: false, error: 'git-fetch-failed', detail: 'network unavailable' }) })
+  stateSets = []
+  fetchButton(panel).props.onClick()
+  await tick()
+  eq(stateSets.filter((set) => set.index === S_DATA).length, 0, 'fetch failure preserves the old list')
+  ok(stateSets.some((set) => set.index === S_MESSAGE && String(set.value).includes('拉取远端分支失败') && String(set.value).includes('network unavailable')), 'fetch failure shows git diagnostics')
+  eq(stateSets.filter((set) => set.index === S_BUSY).at(-1).value, false, 'fetch failure releases the busy state')
+
+  sandbox.fetch = async () => { throw new Error('network disconnected') }
+  stateSets = []
+  fetchButton(panel).props.onClick()
+  await tick()
+  eq(stateSets.filter((set) => set.index === S_DATA).length, 0, 'transport failure also preserves the old list')
+  ok(stateSets.some((set) => set.index === S_MESSAGE && String(set.value).includes('拉取失败')), 'transport failure is shown')
+
+  // 成功/失败走同一个浮层，关掉面板也不会截断反馈。
+  for (const text of ['已拉取 origin 的远端分支', '拉取失败：network disconnected']) {
+    stateIndex = 0
+    presets = preset(false, 'create', [DATA, false, text])
+    const closedFeedback = expand(registrations[0].component(standardProps(REPO_WORKSPACES, REPO_SESSIONS)))
+    const toast = flatten(closedFeedback).find((e) => e.kind === 'element' && e.type === 'toast')
+    eq(toast.props.text, text, 'operation result remains a Toast when the panel is closed')
+    ok(!flatten(closedFeedback).some((e) => e.kind === 'element' && e.props.className === 'wt-panel'), 'result Toast does not reopen the panel')
+  }
+
+  let finishFetch
+  sandbox.fetch = () => new Promise((resolve) => { finishFetch = resolve })
+  stateSets = []
+  fetchButton(twoWsOpen).props.onClick()
+  wsMenu.props.onSelect('w2')
+  stateSets = []
+  finishFetch({ ok: true, json: async () => fetchedData })
+  await tick()
+  eq(stateSets.length, 0, 'a late fetch response cannot overwrite the newly selected workspace')
+  sandbox.fetch = normalFetch
 }
 
-clickChecks().then(() => {
-  console.log('\n' + (failures === 0 ? 'ALL PASS' : failures + ' FAILURE(S)'))
-  process.exit(failures === 0 ? 0 : 1)
-})
+/**
+ * 删除链路：确认框、远端查询与删除请求的回归验证。
+ * 没有真实重渲染，所以「点删除 → 确认框长什么样」靠 presetDelete 把状态预置出来分别断言。
+ */
+const has = (text, needle) => String(text).indexOf(needle) >= 0
+const setOf = (index) => {
+  const found = stateSets.filter((set) => set.index === index)
+  return found.length === 0 ? undefined : found[found.length - 1].value
+}
+const modalOf = (tree) => flatten(tree).filter((e) => e.kind === 'element' && e.type === 'Modal')[0]
+const checkboxesOf = (tree) => flatten(tree).filter((e) => e.kind === 'element' && e.type === 'Checkbox')
+/**
+ * Modal 的按钮在 footer 这个 prop 里（不在 children 里），走查要显式进去。
+ * footer 里是平台 Button（函数组件），expand 只吃 children，所以这里自己再 expand 一遍
+ * 才能拿到它渲染出的 <button>；返回原始元素好点 onClick。
+ */
+const modalFooterButtons = (modal) =>
+  flatten(expand(modal.props.footer)).filter((e) => e.kind === 'element' && e.type === 'button')
+const REMOTE_PRESENT = { repoPath: '/repo', path: '/repo/.worktrees/alpha', status: 'present' }
+const boxOf = (del, rest) => {
+  stateIndex = 0
+  presets = presetDelete(del, rest === undefined ? [DATA, false, null, 'existing', '', '', false] : rest)
+  return expand(registrations[0].component(standardProps(REPO_WORKSPACES, REPO_SESSIONS)))
+}
+const rowDeleteButtons = (tree) =>
+  flatten(tree).filter((e) => e.kind === 'element' && e.type === 'button' && allText(e.children) === '删除')
+
+console.log('\n== delete: 列表行入口 ==')
+{
+  const alpha = DATA.items[0]
+  eq(modalOf(listPanel), undefined, 'no confirmation box before anything is clicked')
+  eq(rowDeleteButtons(listPanel).length, 2, 'every worktree row offers a delete button')
+  const rowDelete = rowDeleteButtons(listPanel)[0]
+  eq(rowDelete.props.className, 'wt-btn wt-btn-danger wt-btn-sm', 'the delete button is the danger variant')
+  eq(rowDelete.props.disabled, false, 'delete is available while idle')
+  eq(rowDelete.props.title, '删除 worktree alpha', 'the icon-only label is spelled out in the tooltip')
+  eq(flatten(rowDelete.children).filter((e) => e.kind === 'element' && e.type === 'trash').length, 1, 'the platform trash icon is used')
+
+  stateSets = []
+  rowDelete.props.onClick()
+  eq(setOf(S_DELETE_TARGET), alpha, 'clicking delete opens the box for that row only')
+  eq(setOf(S_DELETE_FAILURE), null, 'no stale failure from an earlier box')
+  eq(setOf(S_DELETE_FORCE), false, 'force is off by default')
+  eq(setOf(S_DELETE_BRANCH), false, 'local branch deletion is off by default')
+  eq(setOf(S_DELETE_REMOTE), false, 'remote branch deletion is off by default')
+
+  // busy 时行内按钮全部禁用，避免和正在跑的创建/刷新抢
+  stateIndex = 0
+  presets = preset(true, 'list', [DATA, true, null, 'existing', '', '', false])
+  const busyList = expand(registrations[0].component(standardProps(REPO_WORKSPACES, REPO_SESSIONS)))
+  eq(rowDeleteButtons(busyList)[0].props.disabled, true, 'delete cannot be clicked while the panel is busy')
+}
+
+console.log('\n== delete: 确认框 ==')
+{
+  const alpha = DATA.items[0]
+  const box = boxOf([alpha])
+  const modal = modalOf(box)
+  ok(!!modal, 'the confirmation box renders once a target is set')
+  eq(modal.props.title, '删除 worktree', 'box title')
+  eq(modal.props.open, true, 'the platform Modal is opened')
+  ok(has(modal.props.description, 'alpha'), 'the box names the worktree')
+  eq(modal.props.className, 'wt-modal', 'the dialog itself is height-capped through our own class')
+  eq(modal.props.contentClassName, 'wt-modal-content', 'and the scrolling area is handed to the platform content slot')
+  eq(divsWithClass(box, 'wt-steps').length, 1, 'what always happens is laid out as numbered steps')
+  const steps = flatten(box).filter((e) => e.kind === 'element' && e.type === 'li')
+  eq(steps.length, 3, 'exactly three steps: archive, unregister, delete the directory')
+  eq(flatten(box).filter((e) => e.kind === 'element' && e.type === 'ol').length, 1, 'the steps are an ordered list, so the numbers come from the markup')
+  const badges = flatten(box).filter((e) => e.kind === 'element' && e.type === 'span' && e.props.className === 'wt-step-no')
+  eq(badges.map((b) => String(b.children)).join(','), '1,2,3', 'each step carries its own number badge')
+  ok(has(allText(steps[0].children), '归档'), 'step 1 archives the sessions under it')
+  ok(has(allText(steps[0].children), '对话记录保留'), 'step 1 says the transcript itself survives')
+  ok(has(allText(steps[1].children), '从工作区列表中移除'), 'step 2 drops the workspace registration')
+  ok(has(allText(steps[2].children), '删除目录'), 'step 3 deletes the directory')
+  ok(has(allText(steps[2].children), '/repo/.worktrees/alpha'), 'step 3 names the exact directory')
+  eq(divsWithClass(box, 'wt-step-path').length, 1, 'the full path is shown once, as code inside step 3')
+  ok(has(allText(box), '/repo/.worktrees/alpha'), 'the path itself is in the box')
+  ok(!has(allText(box), '不在 /repo/.worktrees/ 下'), 'a worktree inside the root is not flagged as external')
+  // 可选项跟「一定会做」的三步分开，不然会读成第四步
+  eq(divsWithClass(box, 'wt-extras').length, 1, 'the optional part sits in its own section')
+  ok(has(allText(box), '同时删除分支'), 'the optional section says what it is about')
+  // divsWithClass 回的是走查条目而不是原始节点，所以往下走要递它的 children
+  const extras = divsWithClass(box, 'wt-extras')[0]
+  eq(checkboxesOf(extras.children).length, 1, 'the branch checkbox lives inside the optional section')
+  const options = checkboxesOf(box)
+  eq(options.length, 1, 'nothing has failed yet, so only the branch option is offered')
+  eq(options[0].props.checked, false, 'the branch option starts unchecked')
+  eq(options[0].props.disabled, false, 'the branch option is live')
+  ok(has(options[0].props.label, 'feature/alpha'), 'the branch option names the branch it would delete')
+  ok(!has(options[0].props.label, 'origin'), 'the remote option stays hidden until the local one is ticked')
+  // 危险色直接挂在 Button 上，靠 :not(:disabled) 提优先级 —— 官方删工作区同款，footer 不包 wrapper
+  eq(modalFooterButtons(modal).map((b) => allText(b.children)).join(','), '取消,删除', 'footer is cancel + the danger action')
+  eq(modalFooterButtons(modal)[1].props.className, 'wt-modal-danger', 'the confirm button carries our danger class')
+  ok(has(allText(box), '正在确认远端分支'), 'the box announces the live remote query')
+
+  // 勾了本地分支才露出远端那一档
+  const remoteBox = boxOf([alpha, false, null, false, true, false, REMOTE_PRESENT])
+  const remoteOptions = checkboxesOf(remoteBox)
+  eq(remoteOptions.length, 2, 'ticking the local branch reveals the remote option')
+  eq(remoteOptions[1].props.checked, false, 'the remote option is a separate, unchecked opt-in')
+  ok(has(remoteOptions[1].props.label, '远端分支 origin/feature/alpha'), 'the remote option names the remote branch')
+  stateSets = []
+  remoteOptions[1].props.onChange(true)
+  eq(setOf(S_DELETE_REMOTE), true, 'the remote option is wired to its own state')
+  eq(checkboxesOf(boxOf([alpha, false, null, false, true, true, REMOTE_PRESENT]))[1].props.checked, true, 'a ticked remote option renders as checked')
+
+  const noRemoteBox = boxOf([alpha, false, null, false, true, true, { ...REMOTE_PRESENT, status: 'absent' }])
+  eq(checkboxesOf(noRemoteBox).length, 1, 'an absent server branch hides the remote checkbox even with stale checked state')
+  const pendingRemote = boxOf([alpha, false, null, false, true, true])
+  eq(checkboxesOf(pendingRemote).length, 1, 'the remote checkbox stays hidden until the query completes')
+  const failedRemote = boxOf([alpha, false, null, false, true, true, { ...REMOTE_PRESENT, status: 'failed' }])
+  eq(checkboxesOf(failedRemote).length, 1, 'a query failure never offers remote deletion')
+  ok(has(allText(failedRemote), '无法确认远端分支'), 'a query failure is distinct from absence')
+  const staleTarget = boxOf([alpha, false, null, false, true, true, { ...REMOTE_PRESENT, path: '/another-worktree' }])
+  eq(checkboxesOf(staleTarget).length, 1, 'another worktree query result cannot enable remote deletion')
+  const staleRepo = boxOf([alpha, false, null, false, true, true, { ...REMOTE_PRESENT, repoPath: '/another-repo' }])
+  eq(checkboxesOf(staleRepo).length, 1, 'another repository query result cannot enable remote deletion')
+
+  // 仓库外部的 worktree：显著标出来
+  const outside = DATA.items[1]
+  const outsideBox = boxOf([outside])
+  ok(has(allText(outsideBox), '/elsewhere/external'), 'an outside worktree shows its absolute path')
+  ok(has(allText(outsideBox), '不在 /repo/.worktrees/ 下'), 'an outside worktree is flagged as living outside the root')
+  eq(divsWithClass(outsideBox, 'wt-alert-warn').length, 1, 'the outside warning is rendered as a warning callout')
+  eq(flatten(outsideBox).filter((e) => e.kind === 'element' && e.type === 'warn').length, 1, 'the platform warning triangle marks it')
+  ok(has(allText(outsideBox), 'detached HEAD'), 'a detached worktree says there is no branch to delete')
+  eq(checkboxesOf(outsideBox).length, 0, 'a detached worktree offers no branch options')
+
+  // 取消：什么都不发
+  const cancelBox = boxOf([alpha, false, { ok: false, error: 'worktree-dirty', detail: 'x' }])
+  stateSets = []
+  modalFooterButtons(modalOf(cancelBox))[0].props.onClick()
+  eq(setOf(S_DELETE_TARGET), null, 'cancel closes the box')
+  eq(setOf(S_DELETE_FAILURE), null, 'cancel drops the failure text')
+}
+
+console.log('\n== delete: 失败态 ==')
+{
+  const alpha = DATA.items[0]
+  const dirty = boxOf([alpha, false, { ok: false, error: 'worktree-dirty', detail: '3 个文件没提交' }])
+  eq(checkboxesOf(dirty).length, 2, 'the force option appears next to the branch option once git refused a dirty worktree')
+  const forceOption = checkboxesOf(dirty).filter((c) => has(c.props.label, '强制删除'))[0]
+  ok(!!forceOption, 'the force option is the one that spells out what force costs')
+  eq(forceOption.props.checked, false, 'force stays off until it is ticked on purpose')
+  stateSets = []
+  forceOption.props.onChange(true)
+  eq(setOf(S_DELETE_FORCE), true, 'the force option is wired to its own state')
+  const alert = flatten(dirty).filter((e) => e.kind === 'element' && e.props.role === 'alert')
+  eq(alert.length, 1, 'the refusal is shown inside the box')
+  ok(has(allText(dirty), '未提交的改动'), 'the dirty refusal is translated into plain Chinese')
+  ok(has(allText(dirty), '3 个文件没提交'), 'the git detail is kept')
+
+  const locked = boxOf([alpha, false, { ok: false, error: 'worktree-locked' }])
+  ok(has(allText(locked), '被 lock 住了'), 'a locked worktree tells the user to unlock it first')
+  ok(has(allText(locked), 'git worktree unlock'), 'the locked message carries the way out')
+
+  const partial = boxOf([alpha, false, { ok: false, error: 'worktree-remove-failed', detail: 'boom', partial: true }])
+  ok(has(allText(partial), '它的会话已归档'), 'a half-done delete says which half already landed')
+  const plain = boxOf([alpha, false, { ok: false, error: 'worktree-remove-failed', detail: 'boom' }])
+  ok(!has(allText(plain), '它的会话已归档'), 'a pre-flight refusal does not claim anything happened')
+
+  const working = boxOf([alpha, true, null, false, true, true, REMOTE_PRESENT])
+  const workingModal = modalOf(working)
+  // 进度只由下面那行 status 说：按钮文案不换，免得按钮宽度跳一下（官方也只加一行状态）
+  eq(modalFooterButtons(workingModal).map((b) => allText(b.children)).join(','), '取消,删除', 'the action label stays put while deleting')
+  eq(modalFooterButtons(workingModal).map((b) => b.props.disabled).join(','), 'true,true', 'both footer buttons are locked while deleting')
+  const status = flatten(working).filter((e) => e.kind === 'element' && e.props.role === 'status')
+  eq(status.length, 1, 'the pending line is announced')
+  ok(has(allText(working), '正在归档会话并删除目录'), 'the pending line says what is happening')
+}
+
+async function remoteCheckChecks() {
+  console.log('\n== delete: live remote query lifecycle ==')
+  const alpha = DATA.items[0]
+  const remoteEffect = (target) => {
+    recordedEffects = []
+    boxOf([target])
+    const found = recordedEffects.find(({ deps }) => deps?.[0] === '/repo' && deps?.[1] === target)
+    recordedEffects = null
+    return found.effect
+  }
+  for (const [result, status] of [[{ ok: true, exists: true }, 'present'], [{ ok: true, exists: false }, 'absent'], [{ ok: false, error: 'remote-branch-check-failed' }, 'failed']]) {
+    const calls = []
+    sandbox.fetch = async (url, options) => {
+      calls.push({ url, body: JSON.parse(options.body) })
+      return { ok: true, json: async () => result }
+    }
+    stateSets = []
+    const cleanup = remoteEffect(alpha)()
+    await tick()
+    eq(calls[0].url, '/api/dsh-worktree.remoteBranch', 'opening the box calls the live remote endpoint')
+    eq(calls[0].body.repoPath, '/repo', 'the query targets the selected repository')
+    eq(calls[0].body.branch, 'feature/alpha', 'the query names the exact worktree branch')
+    eq(setOf(S_REMOTE_CHECK).status, status, 'the component uses the server result: ' + status)
+    cleanup()
+  }
+  sandbox.fetch = async () => { throw new Error('offline') }
+  stateSets = []
+  let cleanup = remoteEffect(alpha)()
+  await tick()
+  eq(setOf(S_REMOTE_CHECK).status, 'failed', 'a transport error is not treated as an absent remote branch')
+  cleanup()
+
+  let finish
+  sandbox.fetch = () => new Promise((resolve) => { finish = resolve })
+  stateSets = []
+  cleanup = remoteEffect(alpha)()
+  cleanup()
+  finish({ ok: true, json: async () => ({ ok: true, exists: true }) })
+  await tick()
+  eq(setOf(S_REMOTE_CHECK), null, 'a late response after closing or switching targets is ignored')
+
+  let calls = 0
+  sandbox.fetch = async () => { calls++; return { ok: true, json: async () => ({ ok: true, exists: true }) } }
+  remoteEffect(DATA.items[1])()
+  await tick()
+  eq(calls, 0, 'a detached HEAD does not query remote branches')
+}
+
+console.log('\n== delete: 确认后调用宿主 ==')
+async function deleteChecks() {
+  const alpha = DATA.items[0]
+  const calls = []
+  sandbox.fetch = async (url, options) => {
+    calls.push({ url, body: JSON.parse(options.body) })
+    if (url.endsWith('.remove')) {
+      return {
+        ok: true,
+        json: async () => ({
+          ok: true,
+          name: 'alpha',
+          path: '/repo/.worktrees/alpha',
+          branch: 'feature/alpha',
+          how: 'remove',
+          archived: 2,
+          alreadyArchived: 1,
+          branchDeleted: 'feature/alpha',
+          remoteDeleted: 'feature/alpha',
+          warnings: ['prune-is-global: x'],
+        }),
+      }
+    }
+    return {
+      ok: true,
+      json: async () => ({ ok: true, repoRoot: '/repo', worktreeRoot: '/repo/.worktrees', items: [], branches: [], warnings: [] }),
+    }
+  }
+
+  stateSets = []
+  modalFooterButtons(modalOf(boxOf([alpha])))[1].props.onClick()
+  await tick()
+  eq(calls[0].url, '/api/dsh-worktree.remove', 'the confirm button calls the remove route')
+  eq(calls[0].body.name, 'alpha', 'the worktree name is sent')
+  eq(calls[0].body.repoPath, '/repo', 'the selected workspace path is sent explicitly')
+  eq(calls[0].body.sessionId, 's1', 'the caller session rides along for the sandbox and self checks')
+  eq(calls[0].body.force, false, 'force is not sent unless it was ticked')
+  eq(calls[0].body.deleteBranch, false, 'the branch is left alone unless it was ticked')
+  eq(calls[0].body.deleteRemoteBranch, false, 'the remote is left alone unless it was ticked')
+  eq(setOf(S_DELETE_TARGET), null, 'the box closes on success')
+  eq(setOf(S_DELETING), false, 'the pending state is released')
+  eq(calls[1].url, '/api/dsh-worktree.context', 'the list is re-read after a delete')
+  const message = setOf(S_MESSAGE)
+  eq(message, [
+    '已删除 worktree alpha',
+    '已归档 2 个会话',
+    '已删除本地分支 feature/alpha',
+    '已删除远端分支 origin/feature/alpha',
+    'prune-is-global: x',
+  ].join('\n'), 'each deletion result and warning occupies its own line')
+  stateIndex = 0
+  presets = preset(false, 'list', [DATA, false, message])
+  const resultToast = flatten(expand(registrations[0].component(standardProps(REPO_WORKSPACES, REPO_SESSIONS))))
+    .find((e) => e.kind === 'element' && e.type === 'toast')
+  eq(resultToast.props.icon.props.className, 'wt-toast-lines', 'multiline feedback carries its scoped whitespace marker')
+
+  // 勾了强制 + 本地 + 远端：三个都发出去
+  calls.length = 0
+  stateSets = []
+  modalFooterButtons(modalOf(boxOf([alpha, false, null, true, true, true, REMOTE_PRESENT])))[1].props.onClick()
+  await tick()
+  eq(calls[0].body.force, true, 'force is sent when it was ticked')
+  eq(calls[0].body.deleteBranch, true, 'the local branch is sent when it was ticked')
+  eq(calls[0].body.deleteRemoteBranch, true, 'the remote branch is sent when it was ticked')
+
+  calls.length = 0
+  stateSets = []
+  for (const check of [null, { ...REMOTE_PRESENT, status: 'absent' }, { ...REMOTE_PRESENT, status: 'failed' }]) {
+    calls.length = 0
+    modalFooterButtons(modalOf(boxOf([alpha, false, null, false, true, true, check])))[1].props.onClick()
+    await tick()
+    eq(calls[0].body.deleteRemoteBranch, false, 'an unconfirmed or absent remote overrides stale checked state in the request')
+  }
+
+  // 失败：框不关，错误留在框里，也不刷新列表
+  calls.length = 0
+  sandbox.fetch = async (url, options) => {
+    calls.push({ url, body: JSON.parse(options.body) })
+    return { ok: true, json: async () => ({ ok: false, error: 'worktree-dirty', detail: '2 个文件没提交' }) }
+  }
+  stateSets = []
+  modalFooterButtons(modalOf(boxOf([alpha])))[1].props.onClick()
+  await tick()
+  eq(stateSets.filter((set) => set.index === S_DELETE_TARGET).length, 0, 'a failed delete keeps the box open')
+  eq(setOf(S_DELETE_FAILURE).error, 'worktree-dirty', 'the failure is kept for the box')
+  eq(setOf(S_DELETING), false, 'the pending state is released after a failure')
+  eq(calls.length, 1, 'a failed delete does not re-read the list')
+
+  // 传输层炸了也不能把框留在「正在删除…」
+  sandbox.fetch = async () => {
+    throw new Error('network disconnected')
+  }
+  stateSets = []
+  modalFooterButtons(modalOf(boxOf([alpha])))[1].props.onClick()
+  await tick()
+  ok(has(setOf(S_DELETE_FAILURE).error, '删除失败'), 'a transport failure is reported in the box')
+  eq(setOf(S_DELETING), false, 'a transport failure releases the pending state')
+}
+
+clickChecks()
+  .then(remoteCheckChecks)
+  .then(deleteChecks)
+  .then(() => {
+    console.log('\n' + (failures === 0 ? 'ALL PASS' : failures + ' FAILURE(S)'))
+    process.exit(failures === 0 ? 0 : 1)
+  })

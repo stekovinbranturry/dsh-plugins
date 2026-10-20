@@ -17,6 +17,13 @@ export async function callHost<T>(method: string, args: Record<string, unknown>)
 
 /** 宿主只回错误码，翻译成人话在这一层做一次 */
 export function errLabel(result: ErrorResult): string {
+  // 删除是唯一会「做了一半」的操作：归档会话与注销工作区登记都在删目录之前，那一步失败时
+  // 它们已经生效了 —— 只说「删除失败」会让人以为一切照旧，得把已经落下的那半说清。
+  const partial = result.partial === true ? '；它的会话已归档、工作区登记已注销（都可恢复），但目录还在' : ''
+  return labelFor(result) + partial
+}
+
+function labelFor(result: ErrorResult): string {
   const detail = result.detail ? '（' + result.detail + '）' : ''
   switch (result.error) {
     case 'no-workspace':
@@ -43,14 +50,28 @@ export function errLabel(result: ErrorResult): string {
       return '找不到这个 worktree' + detail
     case 'worktree-add-failed':
       return 'git worktree add 失败' + detail
+    case 'git-fetch-failed':
+      return '拉取远端分支失败' + detail
     case 'sandbox-read-only':
-      return '当前会话是只读权限，建不了 worktree' + detail
+      return '当前会话是只读权限，无法写入仓库' + detail
     case 'workspace-outside-sandbox':
       return '这个仓库不在沙箱的可写范围内' + detail
     case 'sandbox-write-denied':
       return '写被拒绝（沙箱范围或文件权限）' + detail
     case 'open-session-failed':
       return '创建会话失败' + detail
+    case 'worktree-dirty':
+      return '这个 worktree 里有未提交的改动，没有删' + detail
+    case 'worktree-locked':
+      return '这个 worktree 被 lock 住了，先 git worktree unlock 再删' + detail
+    case 'worktree-in-use-by-this-session':
+      return '这个 worktree 就是当前会话的工作目录，不能删自己：先把当前会话切到别的工作区' + detail
+    case 'worktree-remove-failed':
+      return 'git worktree remove 失败' + detail
+    case 'worktree-prune-failed':
+      return '清理失效的 worktree 记录失败' + detail
+    case 'session-archive-failed':
+      return '归档它下面的会话失败' + detail
     default:
       return result.error + detail
   }

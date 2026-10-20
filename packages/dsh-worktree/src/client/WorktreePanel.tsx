@@ -1,9 +1,17 @@
 /** 弹窗主体：左侧导航 + 顶栏（工作区选择）+ 两个分区（新建 / 已有）。 */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
-import { Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+import {
+  Button,
+  Checkbox,
+  IconTrashOutlineRegular,
+  IconWarningTriangleOutlineRegular,
+  Modal,
+  Toast,
+  Tooltip,
+} from '@deepseek-ai/dsh-client-ui-primitives'
 
-import type { BranchItem, WorktreeItem } from '../shared/types.js'
+import type { BranchItem, WorktreeItem, WorktreeRemoteBranchResult } from '../shared/types.js'
 import { BranchCombo } from './BranchCombo.js'
 import { WorkspaceCombo } from './WorkspaceCombo.js'
 import { alwaysPickable, baseItems, deriveName, isWorktreePath, pickWorkspace } from './branches.js'
@@ -14,6 +22,7 @@ import {
   IconBranch,
   IconClose,
   IconFolderOption,
+  IconGitPull,
   IconList,
   IconRefresh,
   IconWorktree,
@@ -24,6 +33,7 @@ import type {
   CreateResult,
   ErrorResult,
   OpenResult,
+  RemoveResult,
   SessionListState,
   SlotStandardProps,
   UiWorkspaceService,
@@ -125,6 +135,25 @@ export function WorktreePanel({
   const [newBranch, setNewBranch] = useState('')
   /** 新分支的起点（HEAD 或某个分支名） */
   const [base, setBase] = useState('HEAD')
+  /**
+   * 删除是本插件唯一不可逆的动作，所以确认框不是「确定/取消」两态：
+   * 失败原因留在框里（有未提交改动 → 才露出「强制删除」勾选；被 lock → 让人去 unlock），
+   * 删除进行中按钮 disabled。三个勾选状态默认全关 —— 不替用户决定。
+   */
+  const [deleteTarget, setDeleteTarget] = useState<WorktreeItem | null>(null)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteFailure, setDeleteFailure] = useState<ErrorResult | null>(null)
+  /** 丢掉未提交的改动（宿主侧 = git worktree remove --force） */
+  const [deleteForce, setDeleteForce] = useState(false)
+  /** 连本地分支一起删（宿主侧 = git branch -d，没合并进上游会被拒绝） */
+  const [deleteBranch, setDeleteBranch] = useState(false)
+  /** 连 origin 上的同名分支一起删；比本地再多一道勾选，因为远端删了别人也会受影响 */
+  const [deleteRemoteBranch, setDeleteRemoteBranch] = useState(false)
+  const [deleteRemoteCheck, setDeleteRemoteCheck] = useState<{
+    repoPath: string
+    path: string
+    status: 'present' | 'absent' | 'failed'
+  } | null>(null)
   const closeRef = useRef<HTMLButtonElement | null>(null)
 
   const chosen = useMemo(
@@ -133,17 +162,27 @@ export function WorktreePanel({
   )
   const repoPath = chosen?.path ?? null
 
-  const refresh = useCallback(async () => {
+  const refreshRequest = useRef(0)
+
+  const refresh = useCallback(async (fetchRemote = false) => {
+    const request = ++refreshRequest.current
     if (repoPath === null) {
       setData(null)
+      setBusy(false)
       return
     }
     setBusy(true)
+    if (fetchRemote) setMessage('正在拉取 origin 的远端分支…')
     try {
-      const result = await callHost<ContextResult | ErrorResult>('context', { repoPath })
+      const result = await callHost<ContextResult | ErrorResult>(fetchRemote ? 'fetch' : 'context', {
+        repoPath,
+        ...(fetchRemote ? { sessionId: currentSession } : {}),
+      })
+      // fetch 可能较慢；切换仓库后旧请求不能覆盖新仓库的列表。
+      if (request !== refreshRequest.current) return
       if (result.ok) {
         setData(result)
-        setMessage(result.warnings.length > 0 ? result.warnings.join('；') : null)
+        setMessage(result.warnings.length > 0 ? result.warnings.join('；') : fetchRemote ? '已拉取 origin 的远端分支' : null)
         setBranch((previous) => {
           if (previous !== '' && result.branches.some((item) => item.name === previous)) return previous
           const usable = result.branches.find((item) => item.inWorktree === null)
@@ -153,16 +192,17 @@ export function WorktreePanel({
           previous === 'HEAD' || result.branches.some((item) => item.name === previous) ? previous : 'HEAD',
         )
       } else {
-        setData(null)
+        if (!fetchRemote) setData(null)
         setMessage(errLabel(result))
       }
     } catch (error) {
-      setData(null)
-      setMessage('读取失败：' + String(error))
+      if (request !== refreshRequest.current) return
+      if (!fetchRemote) setData(null)
+      setMessage((fetchRemote ? '拉取失败：' : '读取失败：') + String(error))
     } finally {
-      setBusy(false)
+      if (request === refreshRequest.current) setBusy(false)
     }
-  }, [repoPath])
+  }, [repoPath, currentSession])
 
   useEffect(() => {
     if (open) void refresh()
@@ -193,6 +233,27 @@ export function WorktreePanel({
   }, [mode, branch, newBranch, nameTouched])
 
   const branches = data?.branches ?? []
+  const remoteStatus = deleteRemoteCheck?.repoPath === repoPath && deleteRemoteCheck?.path === deleteTarget?.path
+    ? deleteRemoteCheck?.status
+    : undefined
+  const deleteHasRemote = remoteStatus === 'present'
+
+  useEffect(() => {
+    if (repoPath === null || deleteTarget?.branch == null) return
+    let active = true
+    setDeleteRemoteCheck(null)
+    void (async () => {
+      let status: 'present' | 'absent' | 'failed' = 'failed'
+      try {
+        const result = await callHost<WorktreeRemoteBranchResult>('remoteBranch', { repoPath, branch: deleteTarget.branch })
+        if (result.ok) status = result.exists ? 'present' : 'absent'
+      } catch {
+        // 断网、旧宿主没有此端点等情况都不能当成「远端不存在」。
+      }
+      if (active) setDeleteRemoteCheck({ repoPath, path: deleteTarget.path, status })
+    })()
+    return () => { active = false }
+  }, [repoPath, deleteTarget])
   const bases = useMemo(() => baseItems(branches), [branches])
   const usableBranches = branches.filter((item) => item.inWorktree === null)
   const ready = mode === 'new' ? newBranch.trim() !== '' : branch !== ''
@@ -244,6 +305,62 @@ export function WorktreePanel({
     },
     [ctx, repoPath, currentSession],
   )
+
+  /** 点行内「删除」：只开确认框，什么都还没删 */
+  const openDelete = useCallback((item: WorktreeItem) => {
+    setDeleteTarget(item)
+    setDeleteRemoteCheck(null)
+    setDeleteFailure(null)
+    setDeleteForce(false)
+    setDeleteBranch(false)
+    setDeleteRemoteBranch(false)
+  }, [])
+
+  const closeDelete = useCallback(() => {
+    if (deleting) return
+    setDeleteTarget(null)
+    setDeleteFailure(null)
+  }, [deleting])
+
+  /**
+   * 确认删除。宿主按「归档会话 → 注销工作区登记 → git worktree remove →（勾了才）删分支」
+   * 的顺序做，任一步失败就停在那里并如实报告做到哪一步（ErrorResult.partial）。
+   * 成功或失败都要重读列表：归档会话、删掉分支都会改变列表内容。
+   */
+  const onDeleteConfirm = useCallback(async () => {
+    if (repoPath === null || deleteTarget === null) return
+    setDeleting(true)
+    setDeleteFailure(null)
+    try {
+      const result = await callHost<RemoveResult | ErrorResult>('remove', {
+        repoPath,
+        name: deleteTarget.name,
+        force: deleteForce,
+        deleteBranch,
+        deleteRemoteBranch: deleteBranch && deleteHasRemote && deleteRemoteBranch,
+        sessionId: currentSession,
+      })
+      if (!result.ok) {
+        setDeleteFailure(result)
+        return
+      }
+      setDeleteTarget(null)
+      await refresh()
+      setMessage(
+        [
+          '已删除 worktree ' + result.name,
+          ...(result.archived > 0 ? ['已归档 ' + result.archived + ' 个会话'] : []),
+          ...(result.branchDeleted === null ? [] : ['已删除本地分支 ' + result.branchDeleted]),
+          ...(result.remoteDeleted === null ? [] : ['已删除远端分支 origin/' + result.remoteDeleted]),
+          ...result.warnings,
+        ].join('\n'),
+      )
+    } catch (error) {
+      setDeleteFailure({ ok: false, error: '删除失败', detail: String(error) })
+    } finally {
+      setDeleting(false)
+    }
+  }, [repoPath, deleteTarget, deleteForce, deleteBranch, deleteHasRemote, deleteRemoteBranch, currentSession, refresh])
 
   const onCreate = useCallback(
     async (enter: boolean) => {
@@ -315,11 +432,22 @@ export function WorktreePanel({
     </Tooltip>
   )
 
-  if (!open) return trigger
+  // 临时反馈由平台 Toast 自行浮层、淡出，不挤占表单；新文案重新计时。
+  const toast = message === null ? null : (
+    <Toast
+      key={message}
+      text={message}
+      icon={message.includes('\n') ? <span className="wt-toast-lines" /> : undefined}
+      onDone={() => setMessage((current) => current === message ? null : current)}
+    />
+  )
+
+  if (!open) return <>{trigger}{toast}</>
 
   return (
     <div className={'wt-anchor' + (wide ? '' : ' wt-anchor-rail')}>
       {trigger}
+      {toast}
       <div className="wt-overlay" role="presentation">
         <div className="wt-mask" aria-hidden="true" onClick={() => setOpen(false)} />
         <div className="wt-panel" role="dialog" aria-modal="true" aria-labelledby={TITLE_ID}>
@@ -353,6 +481,7 @@ export function WorktreePanel({
                     value={chosen?.workspaceId ?? null}
                     display={chosen?.title ?? ''}
                     onPick={(id) => {
+                      ++refreshRequest.current
                       setWorkspaceId(id)
                       setData(null)
                     }}
@@ -360,6 +489,19 @@ export function WorktreePanel({
                 </div>
               )}
               <div className="wt-header-actions">
+                <Tooltip label="拉取远端分支（origin），不合并当前分支" side="bottom">
+                  <Button
+                    type="button"
+                    variant="toolbar"
+                    size="sm"
+                    className="wt-icon-btn"
+                    aria-label="拉取远端分支"
+                    disabled={busy || repoPath === null}
+                    onClick={() => void refresh(true)}
+                  >
+                    <IconGitPull />
+                  </Button>
+                </Tooltip>
                 <button
                   type="button"
                   className="wt-icon-btn"
@@ -385,10 +527,6 @@ export function WorktreePanel({
             </div>
 
             <div className="wt-options">
-              {/* warnings 与操作结果共用一个提示位：refresh 成功时把 warnings 写进来，
-                  失败时写错误，避免同一批 warnings 在页面上出现两次 */}
-              {message === null ? null : <div className="wt-msg">{message}</div>}
-
               {section === 'create' ? (
                 <div className="wt-section">
                   <h2 className="wt-title">新建 Worktree</h2>
@@ -507,6 +645,16 @@ export function WorktreePanel({
                               >
                                 打开新会话
                               </button>
+                              <button
+                                type="button"
+                                className="wt-btn wt-btn-danger wt-btn-sm"
+                                disabled={busy}
+                                title={'删除 worktree ' + item.name}
+                                onClick={() => openDelete(item)}
+                              >
+                                <IconTrashOutlineRegular size={14} />
+                                删除
+                              </button>
                             </span>
                           </div>
                           <div className="wt-row-branch" title={item.branch ?? '(detached)'}>
@@ -550,6 +698,125 @@ export function WorktreePanel({
                 </button>
               </div>
             ) : null}
+
+            {/*
+              删除确认框。用平台 Modal（官方「删除工作区」用的也是它）而不是自绘浮层：它是
+              portal，天然盖在自写弹窗之上，焦点陷阱与 Esc 交给平台管。没用 RiskConfirmation
+              是因为它没有 children 槽位，装不下下面这几个勾选。
+              版式分三层：① 一定会执行的三步（编号）② 可选项（勾选，细线隔开）
+              ③ 失败原因 + 补救勾选，紧贴底部的动作按钮。
+            */}
+            {deleteTarget === null ? null : (
+              // 不收句号：弹窗里其他每一行（步骤说明、警告、勾选项）都不收，只它带会很扎眼
+              <Modal
+                open
+                onClose={closeDelete}
+                closeLabel="关闭"
+                className="wt-modal"
+                contentClassName="wt-modal-content"
+                title="删除 worktree"
+                description={'「' + deleteTarget.name + '」的目录将被删除，无法恢复'}
+                footer={
+                  <>
+                    <Button variant="outline" disabled={deleting} onClick={closeDelete}>
+                      取消
+                    </Button>
+                    <Button
+                      variant="outline"
+                      className="wt-modal-danger"
+                      disabled={deleting}
+                      onClick={() => void onDeleteConfirm()}
+                    >
+                      删除
+                    </Button>
+                  </>
+                }
+              >
+                {/* 三步的顺序就是宿主真正执行的顺序，一条不多一条不少 */}
+                <ol className="wt-steps">
+                  <li className="wt-step">
+                    <span className="wt-step-no">1</span>
+                    <span className="wt-step-text">
+                      <span className="wt-step-title">归档该目录下的会话</span>
+                      <span className="wt-step-note">对话记录保留，可在「未分组」里取消归档</span>
+                    </span>
+                  </li>
+                  <li className="wt-step">
+                    <span className="wt-step-no">2</span>
+                    <span className="wt-step-text">
+                      <span className="wt-step-title">从工作区列表中移除</span>
+                    </span>
+                  </li>
+                  <li className="wt-step">
+                    <span className="wt-step-no">3</span>
+                    <span className="wt-step-text">
+                      <span className="wt-step-title">删除目录</span>
+                      <code className="wt-step-path">{deleteTarget.path}</code>
+                    </span>
+                  </li>
+                </ol>
+
+                {data !== null && !deleteTarget.path.startsWith(data.worktreeRoot + '/') ? (
+                  <div className="wt-alert wt-alert-warn">
+                    <IconWarningTriangleOutlineRegular size={16} />
+                    <span>{'不在 ' + data.worktreeRoot + '/ 下，是仓库外部的目录'}</span>
+                  </div>
+                ) : null}
+
+                {/* 可选项：跟「一定会做」的三步用一条细线分开，默认全不勾 */}
+                <div className="wt-extras">
+                  <p className="wt-extras-title">同时删除分支</p>
+                  {deleteTarget.branch === null ? (
+                    <p className="wt-extras-note">它是 detached HEAD，没有分支可删</p>
+                  ) : (
+                    <div className="wt-checks">
+                      <Checkbox
+                        checked={deleteBranch}
+                        onChange={setDeleteBranch}
+                        disabled={deleting}
+                        label={'本地分支 ' + deleteTarget.branch}
+                      />
+                      {/* 服务器确认存在且勾了本地时，才提供远端删除选项。 */}
+                      {deleteBranch && deleteHasRemote ? (
+                        <Checkbox
+                          checked={deleteRemoteBranch}
+                          onChange={setDeleteRemoteBranch}
+                          disabled={deleting}
+                          label={'远端分支 origin/' + deleteTarget.branch}
+                        />
+                      ) : null}
+                    </div>
+                  )}
+                  {deleteTarget.branch !== null && (remoteStatus === undefined || remoteStatus === 'failed') ? (
+                    <p className="wt-extras-note" role="status">
+                      {remoteStatus === 'failed' ? '无法确认远端分支，暂不提供远端删除' : '正在确认远端分支…'}
+                    </p>
+                  ) : null}
+                </div>
+
+                {deleteFailure === null ? null : (
+                  <div className="wt-alert wt-alert-error" role="alert">
+                    {errLabel(deleteFailure)}
+                  </div>
+                )}
+                {/* 「强制删除」只在真被未提交改动拦住之后才露出来：先让人知道代价，再给这个选项 */}
+                {deleteForce || deleteFailure?.error === 'worktree-dirty' ? (
+                  <div className="wt-checks">
+                    <Checkbox
+                      checked={deleteForce}
+                      onChange={setDeleteForce}
+                      disabled={deleting}
+                      label="丢弃未提交的改动，强制删除"
+                    />
+                  </div>
+                ) : null}
+                {deleting ? (
+                  <p className="wt-status" role="status">
+                    正在归档会话并删除目录…
+                  </p>
+                ) : null}
+              </Modal>
+            )}
           </div>
         </div>
       </div>

@@ -36,6 +36,17 @@ export function IconClose(): ReactElement {
   )
 }
 
+/** Git pull：提交节点 + 分支向下箭头；公共 primitives 只有普通分支图标，没有拉取图标。 */
+export function IconGitPull(): ReactElement {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M5 9v6M13 6h3a3 3 0 0 1 3 3v6m-3-3 3 3 3-3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="5" cy="6" r="3" stroke="currentColor" strokeWidth="2" />
+      <circle cx="5" cy="18" r="3" stroke="currentColor" strokeWidth="2" />
+    </svg>
+  )
+}
+
 /** 分支图标（lucide git-branch）：导航"新建 Worktree"与行卡的分支行共用 */
 export function IconBranch(): ReactElement {
   return (

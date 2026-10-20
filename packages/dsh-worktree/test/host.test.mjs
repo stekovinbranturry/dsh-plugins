@@ -167,6 +167,8 @@ function makeFixture(options) {
     shellCalls: [],
     tools: [],
     createRequests: [],
+    /** archiveSession 的调用记录（删 worktree 的第一步） */
+    archived: [],
   }
   const callerCwd = o.cwd ?? repo
   state.sessions.set('sess-1', { id: 'sess-1', header: { id: 'sess-1', cwd: callerCwd } })
@@ -217,7 +219,13 @@ function makeFixture(options) {
           },
         }
       }
-      if (key === 'sessions') return { get: (id) => state.sessions.get(id) }
+      if (key === 'sessions') {
+        return {
+          get: (id) => state.sessions.get(id),
+          // 活会话兜底来源：删 worktree 时要按 cwd 把住在里面的会话捞出来
+          list: () => [...state.sessions.values()],
+        }
+      }
       if (key === 'sessionController') {
         return {
           async create(request) {
@@ -244,13 +252,46 @@ function makeFixture(options) {
         }
       }
       if (key === 'workspaceRegistry') {
-        return {
+        // 官方 WorkspaceRegistry 的最小面：create / list / resolveByPath / delete /
+        // archiveSession。删除 worktree 要用后四个（注销登记 + 归档会话）。
+        const registry = {
           async create(workspacePath, title) {
-            const id = 'ws-' + String(state.workspaces.length + 1)
-            state.workspaces.push({ id, path: workspacePath, title })
-            return { id, path: workspacePath, title }
+            // 同路径幂等（官方契约）：重复登记返回同一条，不新增
+            const existing = state.workspaces.filter((entry) => entry.path === workspacePath)[0]
+            if (existing) return existing
+            const record = {
+              id: 'ws-' + String(state.workspaces.length + 1),
+              path: workspacePath,
+              title,
+              sessionIds: [],
+              archivedSessionIds: [],
+            }
+            state.workspaces.push(record)
+            return record
+          },
+          async list() {
+            return state.workspaces.slice()
+          },
+          async resolveByPath(workspacePath) {
+            return state.workspaces.filter((entry) => entry.path === workspacePath)[0]
+          },
+          async delete(id) {
+            const index = state.workspaces.findIndex((entry) => entry.id === id)
+            if (index < 0) return false
+            state.workspaces.splice(index, 1)
+            return true
+          },
+          async archiveSession(sessionId, options) {
+            if (o.archiveFails === true || (typeof o.archiveFailId === 'string' && sessionId === o.archiveFailId)) {
+              throw new Error('workspace-active-session')
+            }
+            state.archived.push({ sessionId, options })
+            return true
           },
         }
+        // o.noResolveByPath 模拟更老的宿主：只有 list()，按路径找登记要自己遍历
+        if (o.noResolveByPath === true) delete registry.resolveByPath
+        return registry
       }
       return undefined
     },
@@ -294,7 +335,7 @@ eq(JSON.stringify(inject), '[]', '静态 inject 为空：工具与面板接口�
   // 承运层缺位时插件照样装得上（面板接口少一条，git 能力层与模型工具不受影响）
   const noConn = makeFixture({ noConnection: true })
   eq(noConn.state.routes.length, 0, '没有 connection 服务时不注册任何 /api 路由')
-  eq(noConn.state.tools.length, 3, '工具照常注册')
+  eq(noConn.state.tools.length, 4, '工具照常注册')
   cleanup(noConn)
 
 console.log('\n== pure helpers ==')
@@ -352,9 +393,14 @@ const A = makeFixture()
 console.log('\n== model tools ==')
 const T = makeFixture()
 const toolNames = T.state.tools.map((tool) => tool.name)
-eq(toolNames.join(','), 'worktree_list,worktree_create,worktree_open', 'exactly three tools registered')
-ok(toolNames.indexOf('worktree_remove') < 0, 'remove is gone')
-ok(toolNames.indexOf('worktree_prune') < 0, 'prune is gone')
+// remove 必须注册；prune 不做成独立工具，只在目录已消失时由删除流程内部调用。
+eq(
+  toolNames.join(','),
+  'worktree_list,worktree_create,worktree_open,worktree_remove',
+  'exactly four tools registered',
+)
+ok(toolNames.indexOf('worktree_remove') >= 0, 'remove is a first-class tool now')
+ok(toolNames.indexOf('worktree_prune') < 0, 'prune is still not a tool of its own')
 const toolByName = (wanted) => T.state.tools.filter((tool) => tool.name === wanted)[0]
 const listTool = toolByName('worktree_list')
 const createTool = toolByName('worktree_create')
@@ -430,10 +476,12 @@ r = await call(A, 'POST', 'nope', {})
 eq(r.status, 404, 'unknown method -> 404（承运层没有这条路由）')
 r = await call(A, 'POST', 'context/nested', {})
 eq(r.status, 404, 'nested path -> 404')
+// remove 是这次新加的路由（同一条 /api 承运通道，仍然只收 POST）；prune 没有对外端点
 r = await call(A, 'POST', 'remove', { sessionId: 'sess-1' })
-eq(r.status, 404, 'the removed route is gone')
+eq(r.status, 200, 'the remove route is registered')
+eq(r.json.error, 'worktree-not-found', 'remove without a name is a business refusal, not a 404')
 r = await call(A, 'POST', 'prune', { sessionId: 'sess-1' })
-eq(r.status, 404, 'the prune route is gone')
+eq(r.status, 404, 'there is no prune route (prune is internal to remove)')
 r = await call(A, 'POST', 'context', undefined, undefined, '{not json')
 eq(r.status, 400, 'malformed body -> 400')
 
@@ -454,6 +502,85 @@ const remoteBranch = r.json.branches.filter((item) => item.name === 'origin/feat
 eq(remoteBranch.kind, 'remote', 'origin/feature/remote-only is remote')
 eq(remoteBranch.localName, 'feature/remote-only', 'the local name is offered without the prefix')
 eq(remoteBranch.inWorktree, null, 'nothing has it checked out')
+
+console.log('\n== remote branch check reads the server, not tracking refs ==')
+const LIVE = makeFixture()
+try {
+  const tip = headOf(LIVE.repo, 'HEAD')
+  git(['update-ref', '-d', 'refs/heads/feature/remote-only'], LIVE.remote)
+  git(['update-ref', 'refs/heads/feature/server-only', tip], LIVE.remote)
+  const beforeRefs = git(['show-ref'], LIVE.repo)
+  const beforeStatus = git(['status', '--porcelain'], LIVE.repo)
+  eq(headOf(LIVE.repo, 'refs/remotes/origin/feature/remote-only'), tip, 'a deleted server branch still has a cached tracking ref')
+  for (const [branch, exists] of [['feature/remote-only', false], ['feature/server-only', true], ['feature/local-only', false], ['main', true], ['ain', false]]) {
+    const checked = await call(LIVE, 'POST', 'remoteBranch', { repoPath: LIVE.repo, branch })
+    eq(checked.json.ok, true, 'live remote check succeeds for ' + branch)
+    eq(checked.json.exists, exists, 'actual server existence of ' + branch)
+  }
+  eq(git(['show-ref'], LIVE.repo), beforeRefs, 'remote checks do not update or prune local refs')
+  eq(git(['status', '--porcelain'], LIVE.repo), beforeStatus, 'remote checks do not change the worktree')
+  const invalid = await call(LIVE, 'POST', 'remoteBranch', { repoPath: LIVE.repo, branch: '--upload-pack=bad' })
+  eq(invalid.json.error, 'bad-branch', 'remote checks reject invalid branch names')
+  git(['remote', 'set-url', 'origin', join(LIVE.root, 'unavailable.git')], LIVE.repo)
+  const failed = await call(LIVE, 'POST', 'remoteBranch', { repoPath: LIVE.repo, branch: 'main' })
+  eq(failed.json.ok, false, 'an unavailable remote is not reported as a missing branch')
+  eq(failed.json.error, 'remote-branch-check-failed', 'remote query failure has a distinct error code')
+} finally {
+  cleanup(LIVE)
+}
+
+console.log('\n== fetch discovers newly published remote branches ==')
+const FETCH = makeFixture()
+try {
+  const beforeHead = headOf(FETCH.repo, 'HEAD')
+  const trackedFile = join(FETCH.repo, 'README.md')
+  writeFileSync(trackedFile, '# local uncommitted change\n')
+  const beforeStatus = git(['status', '--porcelain'], FETCH.repo)
+  const newTip = git(['commit-tree', '-p', beforeHead, '-m', 'remote change', 'HEAD^{tree}'], FETCH.remote).trim()
+  git(['update-ref', 'refs/heads/feature/new-on-server', newTip], FETCH.remote)
+  git(['update-ref', 'refs/heads/main', newTip], FETCH.remote)
+  // single-branch clone 的窄 refspec；fetch.prune=true 也不能让这个按钮变成删引用操作。
+  git(['config', 'remote.origin.fetch', '+refs/heads/main:refs/remotes/origin/main'], FETCH.repo)
+  git(['config', 'fetch.prune', 'true'], FETCH.repo)
+  git(['update-ref', 'refs/remotes/origin/feature/stale', beforeHead], FETCH.repo)
+  FETCH.state.shellCalls.length = 0
+  let fetched = await call(FETCH, 'POST', 'context', { repoPath: FETCH.repo })
+  ok(!fetched.json.branches.some((item) => item.name === 'origin/feature/new-on-server'), 'ordinary refresh cannot see an unfetched branch')
+  ok(!FETCH.state.shellCalls.some((entry) => entry.command.includes('git fetch')), 'ordinary context never fetches')
+  fetched = await call(FETCH, 'POST', 'fetch', { repoPath: FETCH.repo, sessionId: 'sess-1' })
+  eq(fetched.json.ok, true, 'fetch route succeeds', JSON.stringify(fetched.json))
+  ok(fetched.json.branches.some((item) => item.name === 'origin/feature/new-on-server'), 'fetch returns the newly published branch even with a narrow remote refspec')
+  eq(headOf(FETCH.repo, 'refs/remotes/origin/feature/new-on-server'), newTip, 'the fetched ref is real on disk')
+  eq(headOf(FETCH.repo, 'refs/remotes/origin/main'), newTip, 'the remote tracking tip advances')
+  eq(headOf(FETCH.repo, 'HEAD'), beforeHead, 'fetch does not merge or move HEAD')
+  eq(git(['status', '--porcelain'], FETCH.repo), beforeStatus, 'fetch leaves the index and worktree unchanged')
+  eq(readFileSync(trackedFile, 'utf8'), '# local uncommitted change\n', 'local uncommitted edits are untouched')
+  eq(headOf(FETCH.repo, 'refs/remotes/origin/feature/stale'), beforeHead, 'fetch never prunes refs even when fetch.prune is configured')
+  const fetchCommand = FETCH.state.shellCalls.find((entry) => entry.command.includes('git fetch'))
+  eq(fetchCommand.sandboxPolicy.mode, 'workspace-write', 'fetch carries the caller sandbox mode')
+  eq(fetchCommand.sandboxPolicy.workspaceRoot, FETCH.repo, 'fetch carries the caller workspace root')
+  const created = await call(FETCH, 'POST', 'create', { repoPath: FETCH.repo, sessionId: 'sess-1', branch: 'origin/feature/new-on-server' })
+  ok(created.json.ok, 'the newly fetched branch can create a worktree', JSON.stringify(created.json))
+  eq(headOf(created.json.item.path, 'HEAD'), newTip, 'the worktree starts at the fetched tip')
+  eq(git(['config', 'branch.feature/new-on-server.remote'], FETCH.repo).trim(), 'origin', 'the new worktree tracks origin')
+  eq(git(['config', '--get-all', 'remote.origin.fetch'], FETCH.repo).trim(), '+refs/heads/main:refs/remotes/origin/main', 'fetch and create do not rewrite the repo fetch configuration')
+
+  git(['remote', 'remove', 'origin'], FETCH.repo)
+  fetched = await call(FETCH, 'POST', 'fetch', { repoPath: FETCH.repo })
+  eq(fetched.json.ok, false, 'a missing origin is reported as a failure, not a stale success')
+  eq(fetched.json.error, 'git-fetch-failed', 'fetch failure has a dedicated error code')
+  includes(fetched.json.detail, 'origin', 'fetch failure keeps git diagnostics')
+} finally {
+  cleanup(FETCH)
+}
+const FETCH_RO = makeFixture({ sandboxMode: 'read-only' })
+try {
+  const denied = await call(FETCH_RO, 'POST', 'fetch', { repoPath: FETCH_RO.repo, sessionId: 'sess-1' })
+  eq(denied.json.error, 'sandbox-read-only', 'read-only sessions cannot fetch')
+  ok(!FETCH_RO.state.shellCalls.some((entry) => entry.command.includes('git fetch')), 'read-only is refused before git fetch runs')
+} finally {
+  cleanup(FETCH_RO)
+}
 
 console.log('\n== create from a local branch ==')
 r = await call(A, 'POST', 'create', { sessionId: 'sess-1', branch: 'feature/local-only', task: '在 local-only 上干活' })
@@ -758,6 +885,248 @@ eq(r.json.repoRoot, H.repo, 'repo resolution climbs to the main repo')
 includes(r.json.warnings.join(' | '), 'cwd-missing', 'the missing cwd is reported as a warning')
 ok(r.json.items.some((item) => item.name === 'feature-local-only'), 'the vanished worktree is still listed by git metadata')
 cleanup(H)
+
+// ── 删除 worktree ─────────────────────────────────────────────────────────
+// 覆盖删除前置检查、会话归档、工作区注销与可选分支清理。
+// 全部走真路由 + 真 git，删完的每一条都回磁盘上用 git 自己再验一遍。
+console.log('\n== remove: happy path ==')
+{
+  const RM = makeFixture()
+  r = await call(RM, 'POST', 'create', { sessionId: 'sess-1', branch: 'feature/local-only' })
+  const gonePath = r.json.item.path
+  ok(existsSync(gonePath), '前置：worktree 目录在磁盘上')
+  r = await call(RM, 'POST', 'remove', { sessionId: 'sess-1', name: 'feature-local-only' })
+  ok(r.json && r.json.ok === true, 'remove ok', JSON.stringify(r.json))
+  eq(r.json.name, 'feature-local-only', 'removed name')
+  eq(r.json.path, gonePath, 'removed path')
+  eq(r.json.branch, 'feature/local-only', 'removed branch')
+  eq(r.json.how, 'remove', 'the directory existed, so it was a real remove')
+  eq(r.json.branchDeleted, null, 'the branch survives unless it was asked for')
+  eq(r.json.remoteDeleted, null, 'the remote is never touched by default')
+  ok(!existsSync(gonePath), 'the directory is gone')
+  ok(git(['worktree', 'list', '--porcelain'], RM.repo).indexOf(gonePath) < 0, 'git metadata no longer lists it')
+  ok(
+    git(['rev-parse', '--verify', 'refs/heads/feature/local-only'], RM.repo).trim() !== '',
+    'the local branch is still there',
+  )
+  r = await call(RM, 'POST', 'context', { sessionId: 'sess-1' })
+  eq(r.json.items.length, 0, 'the list is empty again')
+  r = await call(RM, 'POST', 'remove', { sessionId: 'sess-1', name: 'feature-local-only' })
+  eq(r.json.error, 'worktree-not-found', 'removing it twice is refused')
+  cleanup(RM)
+}
+
+console.log('\n== remove: 归档会话 + 注销工作区登记 ==')
+{
+  const AR = makeFixture()
+  r = await call(AR, 'POST', 'create', { sessionId: 'sess-1', branch: 'feature/local-only', enter: true })
+  const insidePath = r.json.item.path
+  const liveSession = r.json.sessionId
+  eq(AR.state.workspaces.length, 1, '前置：worktree 被登记成独立项目')
+  // 登记表里的 sessionIds 就是官方文档保证的「该 cwd 下的持久全集（含已归档）」：
+  // 往里塞一个活会话 + 一个冷会话 + 一个已归档的，删除时应当归档前两个、跳过第三个
+  AR.state.workspaces[0].sessionIds = [liveSession, 'sess-cold', 'sess-already']
+  AR.state.workspaces[0].archivedSessionIds = ['sess-already']
+  AR.state.sessions.delete(liveSession)
+  r = await call(AR, 'POST', 'remove', { sessionId: 'sess-1', name: 'feature-local-only' })
+  ok(r.json && r.json.ok === true, 'remove ok', JSON.stringify(r.json))
+  eq(r.json.archived, 2, 'every unarchived session under that directory was archived')
+  eq(r.json.alreadyArchived, 1, 'the already archived one was skipped')
+  eq(
+    AR.state.archived.map((entry) => entry.sessionId).join(','),
+    liveSession + ',sess-cold',
+    'sessions are archived in registration order',
+  )
+  ok(
+    AR.state.archived.every((entry) => entry.options && entry.options.stopActivity === true),
+    'stopActivity is always set (without it an active session rejects the archive)',
+  )
+  ok(!existsSync(insidePath), 'the directory is gone')
+  eq(AR.state.workspaces.length, 0, 'the project registration was dropped')
+  cleanup(AR)
+
+  // 老宿主没有 resolveByPath：退回 list() + 按路径比对，照样要摘掉登记
+  const NR = makeFixture({ noResolveByPath: true })
+  r = await call(NR, 'POST', 'create', { sessionId: 'sess-1', branch: 'feature/local-only', enter: true })
+  eq(NR.state.workspaces.length, 1, '前置：登记在')
+  r = await call(NR, 'POST', 'remove', { sessionId: 'sess-1', name: 'feature-local-only' })
+  ok(r.json && r.json.ok === true, 'remove ok without resolveByPath', JSON.stringify(r.json))
+  eq(NR.state.workspaces.length, 0, 'the registration is dropped through list() as well')
+  cleanup(NR)
+}
+
+console.log('\n== remove: 脏 worktree 默认拒绝，force 才删 ==')
+{
+  const DR = makeFixture()
+  r = await call(DR, 'POST', 'create', { sessionId: 'sess-1', branch: 'feature/local-only' })
+  const dirtyPath = r.json.item.path
+  writeFileSync(join(dirtyPath, 'scratch.txt'), 'wip\n')
+  r = await call(DR, 'POST', 'remove', { sessionId: 'sess-1', name: 'feature-local-only' })
+  eq(r.json.ok, false, 'a dirty worktree is refused')
+  eq(r.json.error, 'worktree-dirty', 'refusal code')
+  includes(r.json.detail, 'scratch.txt', 'the refusal names the dirty file')
+  eq(r.json.partial, undefined, 'a pre-flight refusal changed nothing at all')
+  ok(existsSync(join(dirtyPath, 'scratch.txt')), 'the file is still there')
+  r = await call(DR, 'POST', 'remove', { sessionId: 'sess-1', name: 'feature-local-only', force: true })
+  ok(r.json && r.json.ok === true, 'force removes it', JSON.stringify(r.json))
+  ok(!existsSync(dirtyPath), 'the directory and the untracked file are gone')
+  cleanup(DR)
+}
+
+console.log('\n== remove: 自删 / locked / 未知名字 / 只读沙箱 都拒在任何副作用之前 ==')
+{
+  const SL = makeFixture()
+  r = await call(SL, 'POST', 'create', { sessionId: 'sess-1', branch: 'feature/local-only' })
+  const selfPath = r.json.item.path
+  SL.state.sessions.get('sess-1').header.cwd = selfPath
+  r = await call(SL, 'POST', 'remove', { sessionId: 'sess-1', name: 'feature-local-only' })
+  eq(r.json.error, 'worktree-in-use-by-this-session', 'a session cannot delete the directory it lives in')
+  eq(r.json.partial, undefined, 'nothing was changed')
+  ok(existsSync(selfPath), 'the directory is still there')
+  cleanup(SL)
+
+  const LK = makeFixture()
+  r = await call(LK, 'POST', 'create', { sessionId: 'sess-1', branch: 'feature/local-only' })
+  const lockedPath = r.json.item.path
+  git(['worktree', 'lock', lockedPath], LK.repo)
+  r = await call(LK, 'POST', 'remove', { sessionId: 'sess-1', name: 'feature-local-only' })
+  eq(r.json.error, 'worktree-locked', 'a locked worktree is refused before anything happens')
+  ok(existsSync(lockedPath), 'the locked worktree is still there')
+  git(['worktree', 'unlock', lockedPath], LK.repo)
+  r = await call(LK, 'POST', 'remove', { sessionId: 'sess-1', name: 'ghost' })
+  eq(r.json.error, 'worktree-not-found', 'an unknown name is refused')
+  r = await call(LK, 'POST', 'remove', { sessionId: 'sess-1' })
+  eq(r.json.error, 'worktree-not-found', 'a missing name is refused')
+  cleanup(LK)
+
+  const RO = makeFixture({ sandboxMode: 'read-only' })
+  git(['worktree', 'add', '--', join(RO.repo, '.worktrees', 'ro'), 'feature/local-only'], RO.repo)
+  r = await call(RO, 'POST', 'remove', { sessionId: 'sess-1', name: 'ro' })
+  eq(r.json.error, 'sandbox-read-only', 'a read-only session cannot remove anything')
+  ok(existsSync(join(RO.repo, '.worktrees', 'ro')), 'nothing was removed')
+  cleanup(RO)
+}
+
+console.log('\n== remove: 分支（本地先 -d，远端单独勾） ==')
+{
+  const BR = makeFixture()
+  r = await call(BR, 'POST', 'create', { sessionId: 'sess-1', branch: 'feature/local-only' })
+  r = await call(BR, 'POST', 'remove', { sessionId: 'sess-1', name: 'feature-local-only', deleteBranch: true })
+  ok(r.json && r.json.ok === true, 'remove ok', JSON.stringify(r.json))
+  eq(r.json.branchDeleted, 'feature/local-only', 'the merged local branch was deleted')
+  eq(git(['branch', '--list', 'feature/local-only'], BR.repo).trim(), '', 'git agrees the branch is gone')
+  eq(r.json.remoteDeleted, null, 'nothing was pushed to the remote')
+  cleanup(BR)
+
+  // 没合并进上游的分支：git branch -d 拒绝，如实报出来，而且不动远端（远端副本白丢才是真损失）
+  const UM = makeFixture()
+  r = await call(UM, 'POST', 'create', { sessionId: 'sess-1', newBranch: 'feature/unmerged', name: 'unmerged' })
+  const unmergedPath = r.json.item.path
+  writeFileSync(join(unmergedPath, 'only-here.txt'), 'x\n')
+  git(['add', '.'], unmergedPath)
+  git(['commit', '-q', '-m', 'unmerged work'], unmergedPath)
+  git(['push', '-q', 'origin', 'feature/unmerged'], UM.repo)
+  r = await call(UM, 'POST', 'remove', {
+    sessionId: 'sess-1',
+    name: 'unmerged',
+    deleteBranch: true,
+    deleteRemoteBranch: true,
+  })
+  ok(r.json && r.json.ok === true, 'the worktree itself is still removed', JSON.stringify(r.json))
+  eq(r.json.branchDeleted, null, 'the unmerged branch is left alone')
+  eq(r.json.remoteDeleted, null, 'the remote is not touched when the local delete was refused')
+  includes(r.json.warnings.join(' | '), 'branch-not-merged', 'the refusal is reported')
+  includes(r.json.warnings.join(' | '), 'remote-branch-skipped', 'the remote copy is deliberately skipped')
+  ok(git(['branch', '--list', 'feature/unmerged'], UM.repo).trim() !== '', 'the branch is still there')
+  eq(git(['ls-remote', '--heads', UM.remote, 'feature/unmerged']).trim() !== '', true, 'the remote copy is still there')
+  cleanup(UM)
+
+  // 已合并：勾了远端就真删远端
+  const PD = makeFixture()
+  r = await call(PD, 'POST', 'create', { sessionId: 'sess-1', newBranch: 'feature/pushed', name: 'pushed' })
+  git(['push', '-q', 'origin', 'feature/pushed'], PD.repo)
+  r = await call(PD, 'POST', 'remove', {
+    sessionId: 'sess-1',
+    name: 'pushed',
+    deleteBranch: true,
+    deleteRemoteBranch: true,
+  })
+  ok(r.json && r.json.ok === true, 'remove ok', JSON.stringify(r.json))
+  eq(r.json.branchDeleted, 'feature/pushed', 'local branch deleted')
+  eq(r.json.remoteDeleted, 'feature/pushed', 'remote branch deleted')
+  eq(git(['ls-remote', '--heads', PD.remote, 'feature/pushed']).trim(), '', 'the bare remote no longer has it')
+  cleanup(PD)
+}
+
+console.log('\n== remove: 目录已经不在了（prunable） ==')
+{
+  const PR = makeFixture()
+  r = await call(PR, 'POST', 'create', { sessionId: 'sess-1', branch: 'feature/local-only' })
+  const stalePath = r.json.item.path
+  rmSync(stalePath, { recursive: true, force: true })
+  r = await call(PR, 'POST', 'remove', { sessionId: 'sess-1', name: 'feature-local-only' })
+  ok(r.json && r.json.ok === true, 'a vanished directory is still cleanable', JSON.stringify(r.json))
+  eq(r.json.how, 'prune', 'it goes down the prune path')
+  includes(r.json.warnings.join(' | '), 'prune-is-global', 'the global scope of prune is reported')
+  ok(git(['worktree', 'list', '--porcelain'], PR.repo).indexOf(stalePath) < 0, 'the stale metadata is gone')
+  cleanup(PR)
+}
+
+console.log('\n== remove: 归档失败就停在删目录之前（partial 如实报） ==')
+{
+  // 一个会话都归档不掉：什么都没动
+  const AF = makeFixture({ archiveFails: true })
+  r = await call(AF, 'POST', 'create', { sessionId: 'sess-1', branch: 'feature/local-only', enter: true })
+  const keptPath = r.json.item.path
+  r = await call(AF, 'POST', 'remove', { sessionId: 'sess-1', name: 'feature-local-only' })
+  eq(r.json.ok, false, 'the archive failure stops the delete')
+  eq(r.json.error, 'session-archive-failed', 'refusal code')
+  eq(r.json.partial, undefined, 'the very first session failed, so nothing had happened yet')
+  ok(existsSync(keptPath), 'the directory is untouched')
+  eq(AF.state.workspaces.length, 1, 'the registration is untouched')
+  cleanup(AF)
+
+  // 归档掉一个之后第二个失败：目录还在，但那一个是既成事实，必须报出来
+  const AP = makeFixture({ archiveFailId: 'sess-cold' })
+  r = await call(AP, 'POST', 'create', { sessionId: 'sess-1', branch: 'feature/local-only', enter: true })
+  const halfPath = r.json.item.path
+  const firstSession = r.json.sessionId
+  AP.state.workspaces[0].sessionIds = [firstSession, 'sess-cold']
+  AP.state.sessions.delete(firstSession)
+  r = await call(AP, 'POST', 'remove', { sessionId: 'sess-1', name: 'feature-local-only' })
+  eq(r.json.ok, false, 'the delete stops at the failing session')
+  eq(r.json.error, 'session-archive-failed', 'refusal code')
+  eq(r.json.partial, true, 'the first session was already archived, so the failure is partial')
+  includes(r.json.warnings.join(' | '), 'archive-partial', 'the partial archive is spelled out')
+  eq(AP.state.archived.map((entry) => entry.sessionId).join(','), firstSession, 'only the first one went through')
+  ok(existsSync(halfPath), 'the directory is still there')
+  eq(AP.state.workspaces.length, 1, 'the registration is still there')
+  cleanup(AP)
+}
+
+console.log('\n== remove tool ==')
+{
+  const RT = makeFixture()
+  const removeTool = RT.state.tools.filter((tool) => tool.name === 'worktree_remove')[0]
+  ok(!!removeTool, 'worktree_remove is registered')
+  eq(removeTool.parameters.required.join(','), 'name', 'remove requires the name')
+  ok(!!removeTool.parameters.properties.force, 'remove offers force')
+  ok(!!removeTool.parameters.properties.deleteBranch, 'remove offers deleteBranch')
+  ok(!!removeTool.parameters.properties.deleteRemoteBranch, 'remove offers deleteRemoteBranch')
+  includes(removeTool.description, 'fails closed', 'the description states the failure mode')
+  includes(removeTool.description, 'worktree_list', 'the description points at worktree_list for the name')
+  const exec = () => ({ agent: { session: { id: 'sess-1', header: { id: 'sess-1', cwd: RT.repo } } }, signal: {} })
+  let text = await removeTool.execute({ name: 'ghost' }, exec())
+  includes(text, 'worktree-not-found', 'a refusal carries the error code')
+  includes(text, 'nothing was changed', 'a pre-flight refusal states that nothing changed')
+  r = await call(RT, 'POST', 'create', { sessionId: 'sess-1', branch: 'feature/local-only' })
+  text = await removeTool.execute({ name: 'feature-local-only', deleteBranch: true }, exec())
+  includes(text, 'ok: true', 'the tool removes it')
+  includes(text, 'sessions archived: 0', 'the tool reports the archive count')
+  includes(text, 'local branch deleted: feature/local-only', 'the tool reports the deleted branch')
+  includes(text, 'remote branch deleted: no', 'the tool reports that the remote was left alone')
+  cleanup(RT)
+}
 
 console.log('\n== no-leak checks ==')
 const F = makeFixture()

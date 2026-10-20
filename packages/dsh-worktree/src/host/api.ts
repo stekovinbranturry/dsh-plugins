@@ -34,6 +34,16 @@ const API: Record<string, ApiHandler> = {
     return core.listWorktreesOp(deps.getState(), targetFrom(args, ctx))
   },
 
+  /** 只读查询 origin 实际分支，不使用可能残留的远端跟踪引用。 */
+  async remoteBranch(ctx, deps, args) {
+    return core.remoteBranchOp(deps.getState(), { ...targetFrom(args, ctx), branch: str(args, 'branch') })
+  },
+
+  /** 用户主动拉取远端分支；普通 context 仍然只读 */
+  async fetch(ctx, deps, args) {
+    return core.fetchBranchesOp(deps.getState(), targetFrom(args, ctx))
+  },
+
   /** 建一个 worktree：检出已有分支，或从某起点新建分支；enter=true 时顺手开成新会话 */
   async create(ctx, deps, args) {
     return core.createWorktreeOp(deps.getState(), {
@@ -55,6 +65,17 @@ const API: Record<string, ApiHandler> = {
       name: str(args, 'name'),
       task: str(args, 'task'),
       agentPreset: str(args, 'agentPreset'),
+    })
+  },
+
+  /** 删一个已有 worktree：归档它的会话 → 注销工作区登记 → 删目录；勾了才连分支一起删 */
+  async remove(ctx, deps, args) {
+    return core.removeWorktreeOp(deps.getState(), {
+      ...targetFrom(args, ctx),
+      name: str(args, 'name'),
+      force: bool(args, 'force'),
+      deleteBranch: bool(args, 'deleteBranch'),
+      deleteRemoteBranch: bool(args, 'deleteRemoteBranch'),
     })
   },
 }

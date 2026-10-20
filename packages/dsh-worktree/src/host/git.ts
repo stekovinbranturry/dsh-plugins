@@ -3,7 +3,16 @@
 import { existsSync, readFileSync, appendFileSync, mkdirSync } from 'node:fs'
 import { basename, dirname, resolve } from 'node:path'
 
-import { ADD_TIMEOUT_MS, BRANCH_RE, GIT_TIMEOUT_MS, NAME_MAX, NAME_RE } from './constants.js'
+import {
+  ADD_TIMEOUT_MS,
+  BRANCH_RE,
+  GIT_TIMEOUT_MS,
+  NAME_MAX,
+  NAME_RE,
+  REMOTE,
+  REMOTE_TIMEOUT_MS,
+  REMOVE_TIMEOUT_MS,
+} from './constants.js'
 import type { Context, SandboxPolicyLike, ShellResult } from './services.js'
 import { shellOf } from './services.js'
 
@@ -243,9 +252,93 @@ export function worktreeAddTracking(
 ): Promise<GitProbe> {
   return runGit(
     ctx,
-    ['worktree', 'add', '-b', q(options.localBranch), '--track', '--', q(options.path), q(options.remoteRef)],
+    // 窄 refspec 的仓库也能跟踪刚拉到的分支；只补本次命令的映射，不改仓库配置。
+    ['-c', q(`remote.${REMOTE}.fetch=+refs/heads/*:refs/remotes/${REMOTE}/*`),
+      'worktree', 'add', '-b', q(options.localBranch), '--track', '--', q(options.path), q(options.remoteRef)],
     options.repoRoot,
     ADD_TIMEOUT_MS,
+    options.policy,
+  )
+}
+
+/**
+ * 删掉一个 worktree：目录与 .git/worktrees 里的元数据一起走 —— 这是 git 自己的语义，
+ * 不是我们 rm -rf（少了元数据会留下 prunable 的幽灵项）。
+ *
+ * 不带 force 时 git 拒绝带未提交改动的 worktree（exit 128，core.ts 按 stderr 分流成
+ * ERR.dirty）；被 `git worktree lock` 锁住的连 --force 都拒（要 `remove -f -f`），
+ * 插件不越权替用户解锁，直接把它当失败报上去。
+ */
+export function worktreeRemove(
+  ctx: Context,
+  options: { repoRoot: string; path: string; force: boolean; policy?: SandboxPolicyLike },
+): Promise<GitProbe> {
+  return runGit(
+    ctx,
+    ['worktree', 'remove', ...(options.force ? ['--force'] : []), '--', q(options.path)],
+    options.repoRoot,
+    REMOVE_TIMEOUT_MS,
+    options.policy,
+  )
+}
+
+/**
+ * 清掉"目录已经没了、git 元数据还留着"的陈旧记录（`git worktree list --porcelain`
+ * 里标了 prunable 的那些）。实测不带 --expire 也是立即生效，所以不传。
+ */
+export function worktreePrune(
+  ctx: Context,
+  options: { repoRoot: string; policy?: SandboxPolicyLike },
+): Promise<GitProbe> {
+  return runGit(ctx, ['worktree', 'prune'], options.repoRoot, REMOVE_TIMEOUT_MS, options.policy)
+}
+
+/**
+ * 某个 worktree 里未提交的改动（porcelain 行，一行一个路径）。只在 git 已经因为
+ * 脏目录拒删之后才调，用来把"有几个文件"补进错误详情 —— 正常路径上零开销。
+ * 读命令，不带策略。
+ */
+export async function worktreeChanges(ctx: Context, path: string): Promise<string[]> {
+  const probe = await runGit(ctx, ['status', '--porcelain'], path)
+  if (probe.code !== 0) return []
+  return probe.out
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line !== '')
+}
+
+/**
+ * 删本地分支。用 `-d` 而**不是** `-D`：没合并进上游/HEAD 时 git 会拒（exit 1，
+ * "is not fully merged"），这正是我们要的 —— 强删会把未合并的提交变成不可达，
+ * 那个决定得用户自己做。分支仍被某个 worktree 检出时 git 也拒（exit 1）。
+ */
+export function branchDelete(
+  ctx: Context,
+  options: { repoRoot: string; branch: string; policy?: SandboxPolicyLike },
+): Promise<GitProbe> {
+  return runGit(
+    ctx,
+    ['branch', '-d', '--', q(options.branch)],
+    options.repoRoot,
+    GIT_TIMEOUT_MS,
+    options.policy,
+  )
+}
+
+/**
+ * 删远端分支 —— 本插件唯一的"改远端"操作（此前只有只读的 fetch），所以单独一个
+ * 超时：要认证、要网络，可能卡住。远端本来就没这个分支时 git 回 exit 1 +
+ * "remote ref does not exist"。
+ */
+export function branchDeleteRemote(
+  ctx: Context,
+  options: { repoRoot: string; remote: string; branch: string; policy?: SandboxPolicyLike },
+): Promise<GitProbe> {
+  return runGit(
+    ctx,
+    ['push', '--delete', '--', q(options.remote), q(options.branch)],
+    options.repoRoot,
+    REMOTE_TIMEOUT_MS,
     options.policy,
   )
 }

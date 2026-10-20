@@ -80,7 +80,7 @@ export function sandboxRefusal(
   if (policy.mode === 'read-only') {
     return {
       error: ERR.sandboxReadOnly,
-      detail: '当前会话的文件权限是只读（read-only）：建 worktree 要写目标仓库，先把权限切到 workspace-write',
+      detail: '当前会话的文件权限是只读（read-only）：此操作要写目标仓库，先把权限切到 workspace-write',
     }
   }
   const roots = writableRoots(policy)
@@ -93,7 +93,7 @@ export function sandboxRefusal(
     detail:
       `目标不在沙箱的可写范围内（目标：${outside[0]}；可写根：${roots.join('、')}）。` +
       'workspace-write 只允许写会话工作区与宿主临时目录（没有会话时回退到宿主启动目录）：' +
-      '请在以该仓库为工作区的会话里创建 worktree，或把当前会话的工作区切到该仓库后重试',
+      '请在以该仓库为工作区的会话里执行此操作，或把当前会话的工作区切到该仓库后重试',
   }
 }
 

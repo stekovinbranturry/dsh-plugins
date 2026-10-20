@@ -56,8 +56,17 @@ export const TASK_SECTION_TEMPLATE = '任务：\n{task}'
 /** 普通 git 命令超时 */
 export const GIT_TIMEOUT_MS = 20_000
 
+/** fetch 需要访问远端，单独放宽 */
+export const FETCH_TIMEOUT_MS = 60_000
+
 /** git worktree add 要落盘整个工作区，单独放宽 */
 export const ADD_TIMEOUT_MS = 60_000
+
+/** git worktree remove 要落盘删除整个工作区，与 add 同量级 */
+export const REMOVE_TIMEOUT_MS = 60_000
+
+/** 删远端分支要访问远端（可能要认证），与 fetch 同量级 */
+export const REMOTE_TIMEOUT_MS = 60_000
 
 /** 插件内部错误码：前端按码显示中文，不要靠解析文案 */
 export const ERR = {
@@ -76,6 +85,7 @@ export const ERR = {
   exists: 'worktree-exists',
   notFound: 'worktree-not-found',
   addFailed: 'worktree-add-failed',
+  fetchFailed: 'git-fetch-failed',
   openFailed: 'open-session-failed',
   /** 会话文件权限是只读，写不了任何东西 */
   sandboxReadOnly: 'sandbox-read-only',
@@ -83,4 +93,21 @@ export const ERR = {
   sandboxOutside: 'workspace-outside-sandbox',
   /** git 真的撞上了写拒绝（EPERM/EACCES），前置判定没能提前拦下 */
   sandboxDenied: 'sandbox-write-denied',
+  /** 目标 worktree 里有未提交的改动，git 拒绝删除（要强删得显式 force） */
+  dirty: 'worktree-dirty',
+  /** 目标 worktree 被 `git worktree lock` 锁住了 */
+  locked: 'worktree-locked',
+  /** 要删的就是当前会话自己所在的 worktree：删掉它等于把自己的 cwd 抽掉 */
+  self: 'worktree-in-use-by-this-session',
+  removeFailed: 'worktree-remove-failed',
+  pruneFailed: 'worktree-prune-failed',
+  /** 归档该 worktree 下的会话失败。归档是删除的第一步，失败即停，目录不动 */
+  archiveFailed: 'session-archive-failed',
+  /** 本地分支没合并进上游/HEAD，`git branch -d` 拒绝（强删要用户自己决定） */
+  branchUnmerged: 'branch-not-merged',
+  branchDeleteFailed: 'branch-delete-failed',
+  /** 远端上本来就没有这个分支（`push --delete` 回了 remote ref does not exist） */
+  remoteBranchMissing: 'remote-branch-not-found',
+  remoteDeleteFailed: 'remote-branch-delete-failed',
+  remoteCheckFailed: 'remote-branch-check-failed',
 } as const

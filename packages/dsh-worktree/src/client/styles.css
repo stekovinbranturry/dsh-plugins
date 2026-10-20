@@ -625,6 +625,17 @@
   background: var(--dsw-alias-interactive-bg-hover-solid, rgba(127, 127, 127, 0.12));
 }
 
+/* 危险动作（删除 worktree）：错误色文字 + 危险 hover 填充，跟平台 Menu 的 danger 行同一套 token */
+.wt-btn-danger {
+  border: 0.5px solid var(--dsw-alias-border-l3, rgba(127, 127, 127, 0.35));
+  background: transparent;
+  color: var(--dsw-alias-state-error-primary, #d92d20);
+}
+
+.wt-btn-danger:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover-danger, rgba(217, 45, 32, 0.12));
+}
+
 /* 行内动作：设置弹窗的行卡片用的就是 28 高 / radius 14 的小号次要按钮 */
 .wt-btn-sm {
   height: 28px;
@@ -714,15 +725,191 @@
   white-space: nowrap;
 }
 
-/* ── 提示 / 错误 ──────────────────────────────────────────────────────── */
+/* 平台 Toast 只收 string，且没有 className/style；它 portal 到 body，无法继承面板样式。
+   借公开 icon 槽放标记，只对本插件的多行提示保留换行，不依赖平台私有类名。 */
+[role='alert']:has(.wt-toast-lines) {
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
 
-.wt-msg {
-  margin-bottom: 12px;
-  padding: 10px 14px;
-  border-radius: 12px;
-  background: var(--dsw-alias-bg-module-platform, rgba(127, 127, 127, 0.08));
+[role='alert'] > span:has(> .wt-toast-lines) {
+  display: none;
+}
+
+/* ── 删除确认框（平台 Modal 里我们自己画的部分） ─────────────────────── */
+
+/* 内容比一屏高时自己收口。照 RiskConfirmation 的写法：先 100%，有 dvh 再用 dvh ——
+   100vh 在移动端会被地址栏吃掉一截。.dialog 自己已经 overflow:hidden。 */
+.wt-modal {
+  max-height: 100%;
+  overflow: hidden;
+}
+
+@supports (height: 100dvh) {
+  .wt-modal {
+    max-height: calc(100dvh - 48px);
+  }
+}
+
+.wt-modal-content {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/*
+  footer 里那个危险按钮。平台 .button 是单类选择器且写死了 label-primary 色，
+  加 :not(:disabled) 把优先级抬到 (0,2,0) 就压得住 —— 官方删工作区就是这么写的
+  （dsh-client-ui-workspace 的 .deleteAction:not(:disabled)）。
+  :disabled 那条单独再写一遍：否则删除进行中按钮会掉回 .button 的黑色，
+  一瞬间看不出它是那个危险动作（透明度由 .button:disabled 自己管，仍是淡红）。
+*/
+.wt-modal-danger:not(:disabled),
+.wt-modal-danger:disabled {
+  color: var(--dsw-alias-state-error-primary, #d92d20);
+}
+
+.wt-modal-danger:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover-danger, rgba(217, 45, 32, 0.08));
+}
+
+/* 一定会执行的三步：编号 + 一句话，顺序就是宿主真正执行的顺序 */
+.wt-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.wt-step {
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  align-items: start;
+  gap: 10px;
+}
+
+/*
+  序号用发丝描边的小圆，不用填充色块：白底上看得见，又不喧宾夺主。
+  - 描边取 border-l4：平台自己的描边胶囊就是这么画的（Tag[data-tone='outline']），
+    border-l2 在白色弹窗上只有 1.16:1，基本看不见。
+  - corner-shape:round 是必须的：主题给 * 挂了 superellipse(1.5)，不写这一行这个圆
+    会被渲染成圆角方块（平台 Tag/Pill 也是各自显式写 round 的）。
+*/
+.wt-step-no {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  border: 0.5px solid var(--dsw-alias-border-l4, rgba(127, 127, 127, 0.29));
+  border-radius: 50%;
+  corner-shape: round;
+  color: var(--dsw-alias-label-secondary, #6b7280);
+  font-size: 11px;
+  line-height: 1;
+}
+
+.wt-step-text {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.wt-step-title {
+  color: var(--dsw-alias-label-primary, #111827);
+  font-size: 14px;
+  line-height: 22px;
+}
+
+/* 12px 的说明行用 secondary 不用 tertiary：tertiary 在白底上只有 3.7:1，12px 读着发虚；
+   官方弹窗里同样是 12px 的状态行也用 secondary（.deleteStatus）。 */
+/* margin:0 是必须的：.wt-extras-note 是 <p>，浏览器默认给 1em 上下边距，会在框里凭空多出 12px */
+.wt-step-note,
+.wt-extras-note {
+  margin: 0;
+  color: var(--dsw-alias-label-secondary, #6b7280);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+/* 要删的完整路径：外部 worktree 不在 .worktrees/ 下，这是唯一能一眼看出差别的地方 */
+.wt-step-path {
+  color: var(--dsw-alias-label-secondary, #6b7280);
+  font-family: var(--dsw-font-markdown-code-font-family, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  line-height: 18px;
+  word-break: break-all;
+}
+
+/* 可选项：跟「一定会做」的三步用一条发丝线分开，让人看清哪些是附加的 */
+.wt-extras {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 0.5px solid var(--dsw-alias-border-l2, rgba(127, 127, 127, 0.2));
+}
+
+.wt-extras-title {
+  margin: 0 0 10px;
   color: var(--dsw-alias-label-primary, #111827);
   font-size: 13px;
+  font-weight: 500;
   line-height: 20px;
-  word-break: break-word;
+}
+
+/* 显式勾选（本地/远端分支、强制删除）默认都不勾，竖排 */
+.wt-checks {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.wt-alert + .wt-checks {
+  margin-top: 10px;
+}
+
+/*
+  提示行。不上底色：官方弹窗里的状态行/错误行就是一行彩色小字（dsh-client-ui-workspace
+  的 .renameError、.deleteStatus），380px 的框里再套个色块反而糊。
+*/
+.wt-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 16px;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.wt-alert > svg {
+  flex: none;
+  margin-top: 1px;
+}
+
+/*
+  警告文字用 label-primary、只让图标吃琥珀色。原因：--dsw-alias-state-warn-label 是
+  amber-600，白底上实测只有 2.79:1，12px 读不清 —— 而这段话恰恰是要人认真看的
+  （「不在 .worktrees/ 下」）。语义交给图标，可读性交给文字色。
+*/
+.wt-alert-warn {
+  color: var(--dsw-alias-label-primary, #111827);
+}
+
+.wt-alert-warn > svg {
+  color: var(--dsw-alias-state-warn-label, #d97706);
+}
+
+.wt-alert-error {
+  color: var(--dsw-alias-state-error-primary, #d92d20);
+}
+
+.wt-status {
+  margin: 16px 0 0;
+  color: var(--dsw-alias-label-secondary, #6b7280);
+  font-size: 12px;
+  line-height: 18px;
 }

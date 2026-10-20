@@ -1,4 +1,4 @@
-// 3 个模型工具。参数由 defineTool 按 schema 校验；真正的能力都在 core.ts，
+// 4 个模型工具。参数由 defineTool 按 schema 校验；真正的能力都在 core.ts，
 // 与浏览器半走的是同一批函数，避免两端语义漂移。
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
@@ -22,11 +22,23 @@ function callerOf(exec: { agent?: { session?: { id: string; header: { cwd?: stri
   return { sessionId: session.id, session: session as unknown as SessionLike }
 }
 
-function renderError(result: { error: string; detail?: string; warnings?: string[] }): string {
+function renderError(result: {
+  error: string
+  detail?: string
+  warnings?: string[]
+  partial?: boolean
+}): string {
   const lines = ['ok: false', 'error: ' + result.error]
   if (result.detail) lines.push('detail: ' + result.detail)
   if (result.warnings && result.warnings.length > 0) lines.push('warnings: ' + result.warnings.join(' | '))
-  lines.push('nothing was changed.')
+  // 删除是唯一会「做了一半」的操作：归档会话与注销工作区登记都在删目录之前，那一步失败时
+  // 它们已经生效了 —— 这时说 "nothing was changed" 是假话，得如实说清哪一半落下了。
+  lines.push(
+    result.partial === true
+      ? 'the worktree directory and its git metadata are unchanged, but its sessions are already archived ' +
+          'and its workspace registration is already gone (both are reversible in the UI).'
+      : 'nothing was changed.',
+  )
   return lines.join('\n')
 }
 
@@ -178,6 +190,73 @@ export function registerTools(ctx: Context, deps: ToolDeps): void {
           'path: ' + result.path,
           'new session: ' + result.sessionId + '  title: ' + result.title,
           'the new session is already opened in the UI; this session is unchanged.',
+        ]
+        lines.push(...renderWarnings(result.warnings))
+        return lines.join('\n')
+      },
+    }),
+  )
+
+  ctx.tools.register(
+    defineTool({
+      name: 'worktree_remove',
+      description:
+        'Delete an EXISTING git worktree of the repository the current session works in. Use worktree_list ' +
+        'first to get the exact name. In order: the sessions whose working directory is that worktree are ' +
+        'archived (their logs are kept and they can be unarchived; a session still running is stopped), then ' +
+        'its workspace registration is dropped, then the directory is removed with git worktree remove. It ' +
+        'fails closed and changes nothing when the worktree has uncommitted or untracked files (pass force=true ' +
+        'to discard them), when it is locked, when the name is unknown, or when it is the working directory of ' +
+        'THIS session (switch this session elsewhere first). When the directory is already gone, only the stale ' +
+        'git metadata is pruned instead. deleteBranch=true also deletes the local branch it had checked out via ' +
+        'git branch -d, which refuses a branch that is not fully merged (that refusal is reported and the ' +
+        'remote branch is then left alone); deleteRemoteBranch=true also deletes the branch on origin, and is ' +
+        'off by default because it is the only operation in this plugin that writes to the remote. The worktree ' +
+        'root and the branch name come from git itself, never from stored metadata.',
+      parameters: {
+        name: {
+          type: 'string',
+          required: true,
+          description: 'Worktree name as reported by worktree_list.',
+        },
+        force: {
+          type: 'boolean',
+          description:
+            'Discard uncommitted and untracked files in that worktree (git worktree remove --force). ' +
+            'Defaults to false.',
+        },
+        deleteBranch: {
+          type: 'boolean',
+          description:
+            'Also delete the local branch that worktree had checked out (git branch -d). Refuses when the ' +
+            'branch is not fully merged. Defaults to false.',
+        },
+        deleteRemoteBranch: {
+          type: 'boolean',
+          description: 'Also delete that branch on origin. Defaults to false.',
+        },
+      },
+      output: TEXT_OUTPUT,
+      async execute(args, exec) {
+        const result = await core.removeWorktreeOp(deps.getState(), {
+          ...callerOf(exec),
+          name: args.name,
+          force: args.force === true,
+          deleteBranch: args.deleteBranch === true,
+          deleteRemoteBranch: args.deleteRemoteBranch === true,
+        })
+        if (!result.ok) return renderError(result)
+        const lines = [
+          'ok: true',
+          'removed: ' + result.name + '  ' + (result.branch ?? '(detached)') + '  ' + result.path,
+          result.how === 'prune'
+            ? 'the directory was already gone; only the stale git metadata was pruned (git worktree prune ' +
+                'clears every stale entry, so it may have cleaned more than this one)'
+            : 'the directory and its git metadata are gone',
+          'sessions archived: ' + result.archived +
+            (result.alreadyArchived > 0 ? ' (already archived: ' + result.alreadyArchived + ')' : ''),
+          'local branch deleted: ' + (result.branchDeleted ?? 'no'),
+          'remote branch deleted: ' + (result.remoteDeleted ?? 'no'),
         ]
         lines.push(...renderWarnings(result.warnings))
         return lines.join('\n')

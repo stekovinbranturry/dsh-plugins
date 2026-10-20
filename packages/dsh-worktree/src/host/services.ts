@@ -73,6 +73,8 @@ export interface SessionLike {
 
 export interface Sessions {
   get(id: string): SessionLike | undefined
+  /** 当前活着的会话；枚举"某个目录下的会话"时的兜底（登记表缺失时用） */
+  list?(): SessionLike[]
 }
 
 export interface PromptSignal {
@@ -104,12 +106,35 @@ export interface WorkspaceRecord {
   id: string
   path: string
   title?: string
+  /**
+   * 该工作区下的会话 id（官方 Workspace.sessionIds）。文档原文：持久层按会话头过滤过
+   * —— 缺头、cwd 非法、canonical cwd 对不上的都不会出现在这里；已归档的会话**仍在**
+   * 这个列表里（归档只是从"当前"移走），所以要配合 archivedSessionIds 跳过。
+   */
+  sessionIds?: readonly string[]
+  /** 已经归档的会话 id；归档是幂等的，这些直接跳过 */
+  archivedSessionIds?: readonly string[]
 }
 
 export interface WorkspaceRegistry {
   create(path: string, title?: string): Promise<WorkspaceRecord>
   list(): WorkspaceRecord[]
   get(id: string): WorkspaceRecord | undefined
+  /**
+   * 按路径找已登记的工作区（官方 dsh-workspace/lib/types/index.d.ts:264）。
+   * 这是"某个目录下有哪些会话"的唯一入口：sessionIds 只能从工作区登记上拿。
+   */
+  resolveByPath?(path: string): Promise<WorkspaceRecord | undefined>
+  /**
+   * 归档一个会话：从"当前"列表移走、日志保留、可 unarchive —— 所以它不是删除。
+   *
+   * 官方契约（dsh-workspace/lib/types/index.d.ts:203-208）：**不带 stopActivity 时会话
+   * 必须是 inactive**，否则 reject WorkspaceActiveSessionError；带 true 则不检查活跃度、
+   * 直接把归档写下去，然后要求 session-stop providers 停掉它正在跑的活。
+   */
+  archiveSession?(sessionId: string, options?: { stopActivity?: boolean }): Promise<unknown>
+  /** 只注销登记，保留目录与全部会话日志（官方 dsh-workspace/lib/types/index.d.ts:180） */
+  delete?(id: string): Promise<boolean>
 }
 
 export interface ClientModules {

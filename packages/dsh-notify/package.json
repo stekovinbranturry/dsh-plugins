@@ -1,7 +1,6 @@
 {
   "name": "dsh-notify",
   "version": "0.1.0",
-  "private": true,
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -9,6 +8,16 @@
     "directory": "packages/dsh-notify"
   },
   "description": "DSH notify plugin: browser notifications, in-page toast, sound, tab-title badge and webhook when a session finishes, needs approval, or waits for an answer.",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "notification",
+    "notify",
+    "toast",
+    "webhook",
+    "desktop-notification"
+  ],
   "type": "module",
   "main": "./dist/host/index.js",
   "exports": {

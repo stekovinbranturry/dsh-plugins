@@ -1,7 +1,6 @@
 {
   "name": "dsh-worktree",
   "version": "0.1.0",
-  "private": true,
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -9,6 +8,16 @@
     "directory": "packages/dsh-worktree"
   },
   "description": "DSH worktree plugin: pick an existing git worktree, or create one (from an existing branch or a brand-new branch), and open it in a new session.",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "git",
+    "git-worktree",
+    "worktree",
+    "workspace",
+    "parallel-agents"
+  ],
   "type": "module",
   "main": "./dist/host/index.js",
   "exports": {

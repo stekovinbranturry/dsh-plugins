@@ -2,21 +2,44 @@
 
 ## README 约束
 
-每个插件的 README 只写三件事：
+这两个插件要开源、要上 DSH market，README 就是它们的**产品页** —— 访客从市场点进来，先读 README
+再决定装不装。所以按推广口径写：**能卖，但不注水**。
 
-1. **安装** —— 怎么装进 DSH profile（必要的提醒要写，比如"宿主半装完必须重启 DSH"），怎么卸载
-2. **本地开发** —— `build` / `dev:client` / `dev:host` / `test` 这几条命令，以及改动如何生效
-   （客户端半刷新页面，宿主半重启 DSH）
-3. **产品截图** —— 真机截图放 `docs/`，README 里用 `![说明](docs/xxx.png)` 引用
+**首屏三件事**，顺序固定，不许被别的章节挤下去：
 
-**其余一律不写**：功能罗列、架构说明、分段与插槽细节、错误码表、配置项明细、决策记录、测试分层与断言数、
-踩坑日记、更新日志、"怎么加一个新插件"这类流程说明。这些要么写进代码注释，要么写进 commit message，
-**不要堆进 README**。
+1. **一句话定位** —— 它替用户解决什么问题（不是功能复述）
+2. **主截图** —— 一张最能说明价值的真机截图
+3. **安装** —— 最短可用路径，复制粘贴就能装上
 
-- **根 README 只介绍有哪些插件**：一张表（包名 / 一句话作用 / 依赖 / 截图链接）+ 一句定位，
-  不重复各插件的细节，也不放命令、约定、来源之类的章节
-- **截图必须真机跑出来**（隔离实例 + 真浏览器 + 按元素裁剪），不要手绘示意图、不要贴假数据
-- **保持短**：一屏读完。宁可少写，也不要为了"完整"往回堆内容
+**允许写**：功能亮点（短句罗列，不写散文）、使用场景、配置项明细、卸载、本地开发、更多截图。
+
+**仍然不写**：架构说明、分段与插槽细节、决策记录、测试分层与断言数、踩坑日记、更新日志、
+"怎么加一个新插件"这类贡献者流程（要写就放 `CONTRIBUTING.md`）。这些进代码注释或 commit message。
+
+- **根 README 是货架**：一句定位 + 一张表（包名 / 一句话作用 / 依赖 / 截图缩略图），每行链到
+  各插件的 README，不重复细节
+- **截图必须真机跑出来**（隔离实例 + 真浏览器 + 按元素裁剪），不要手绘示意图、不要贴假数据。
+  放 `packages/<pkg>/docs/`，README 里用 `![说明](docs/xxx.png)` 引用
+- **保持短**：首屏一屏读完。功能亮点宁可少写两条，也不要为了"完整"往回堆
+
+## 上市场要的元数据
+
+市场索引（format 1，`@deepseek-ai/dsh-plugin-market-index`）按包名 + 版本列出可装项。发版前逐项确认：
+
+| 索引字段 | 来源 | 注意 |
+|---|---|---|
+| `name` | `package.json` `name` | 市场内唯一 |
+| `title` / `description` | 索引条目；`description` 惯例同 `package.json` | 支持本地化文本 |
+| `icon` | 索引条目 | base64 `data:` URL 或绝对 URL；索引不给就没有图标 |
+| `author` / `homepage` | `package.json` | 展示用 |
+| `repository{url,directory}` | `package.json` `repository` | `directory` 是包在仓里的相对路径，monorepo 必填 |
+| `metadata.keywords` | 惯例取 `package.json` `keywords` | 免费字符串，搜索靠它 |
+| `metadata.category` / `labels` | 索引条目 | id 必须在索引里声明过，不能自造 |
+| `versions[].source` | `npm`，或 `git` + 40 位 commit | 从哪装 |
+| `versions[].engines.dsh` | `package.json` `engines.dsh` | **省略 = 任意 DSH 版本**；一旦声明就**只按它裁决**，`peerDependencies` 里的 dsh 包被完全忽略 |
+
+- 要走 npm 源的包不能 `private: true`；走 git 源则不必发布，但市场条目要钉 40 位 commit
+- `engines.dsh` 是给宿主看的运行时门槛（如 `^0.2.1-rc.2`），与 npm 的 `engines.node` 不是一回事
 
 ## 复用 DSH 公共能力：先找，再写
 

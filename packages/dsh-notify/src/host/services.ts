@@ -62,7 +62,6 @@ export interface WebRoute {
 
 export interface WebServer {
   register(route: WebRoute): () => void
-  readonly port: number
 }
 
 /**

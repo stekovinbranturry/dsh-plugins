@@ -4,11 +4,14 @@
   "description": "Independent worktree and notification plugins for DeepSeek Harness (DSH).",
   "license": "MIT",
   "scripts": {
-    "build": "pnpm -r run build",
-    "typecheck": "pnpm -r run typecheck",
-    "test": "pnpm -r run test",
-    "dev": "pnpm -r --parallel --stream run /^dev:/",
-    "clean": "pnpm -r run clean"
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "dev": "turbo run dev:client dev:host",
+    "clean": "turbo run clean"
+  },
+  "devDependencies": {
+    "turbo": "^2.10.12"
   },
   "packageManager": "pnpm@11.25.0",
   "engines": {

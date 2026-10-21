@@ -27,7 +27,7 @@ pnpm --filter dsh-worktree run install:profile
 
 这个插件把它收进侧边栏底部的一行「Worktree」：
 
-![侧边栏入口](docs/sidebar-entry.png)
+![侧边栏底部的入口](docs/entry.png)
 
 - **开 worktree** —— 选已有分支或新建分支，目录落在仓库的 `.worktrees/` 下
 - **起新会话** —— 新会话的 cwd 直接冻在那个 worktree 里，模型一开始就站在正确的位置

@@ -38,7 +38,9 @@ pnpm --filter dsh-worktree run install:profile
 以及**正要删当前会话自己所在的目录**。写操作走 DSH 沙箱策略，只读会话或工作区外的目录提前拒绝，
 不会撞到 git 才报错。
 
-新开的 worktree 默认注册成一个独立项目，左侧栏按项目分组时嵌在仓库底下。
+新开的 worktree 默认注册成一个独立项目，左侧栏按项目分组时嵌在仓库底下。在「已有 Worktree」那一栏点**打开新会话**，会话的 cwd 就直接冻在那个 worktree 里：
+
+![切到已有 worktree](docs/open-session.png)
 
 | 已有 worktree | 删除确认 |
 |---|---|

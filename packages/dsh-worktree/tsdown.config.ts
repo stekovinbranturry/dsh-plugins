@@ -7,7 +7,7 @@ import path from 'node:path'
 import { defineConfig } from 'tsdown'
 import type { Plugin } from 'rolldown'
 
-const ENTRY_ID = '@stekovinbranturry/dsh-worktree'
+const ENTRY_ID = '@zhanghanxuan/dsh-worktree'
 const CSS_VIRTUAL_PREFIX = '\0dsh-worktree-css:'
 // 虚拟 id 必须以非 css 扩展名结尾：tsdown 的 css-guard filter 只看结尾
 const CSS_VIRTUAL_SUFFIX = '.js'

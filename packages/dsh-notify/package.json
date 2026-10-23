@@ -1,5 +1,5 @@
 {
-  "name": "@stekovinbranturry/dsh-notify",
+  "name": "@zhanghanxuan/dsh-notify",
   "publishConfig": {
     "access": "public"
   },
@@ -54,7 +54,7 @@
     "verify": "node scripts/verify.mjs",
     "test": "pnpm run build && pnpm run typecheck && pnpm run test:client && pnpm run verify",
     "install:profile": "dsh plugin --profile web add .",
-    "uninstall:profile": "dsh plugin --profile web remove @stekovinbranturry/dsh-notify",
+    "uninstall:profile": "dsh plugin --profile web remove @zhanghanxuan/dsh-notify",
     "prepack": "pnpm run build",
     "test:client": "tsdown --config tsdown.test.config.ts"
   },

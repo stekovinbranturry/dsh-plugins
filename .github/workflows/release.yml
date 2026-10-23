@@ -5,7 +5,7 @@ name: Release
 # - 合并那个 PR 时构建并发版到 npm
 #
 # 需要仓库 secret NPM_TOKEN：npm 的 Automation token，且该账号要拥有
-# @stekovinbranturry 这个 scope（scope 包默认 restricted，靠 .changeset/config.json
+# @zhanghanxuan 这个 scope（scope 包默认 restricted，靠 .changeset/config.json
 # 的 access: public 转公开）。
 
 on:

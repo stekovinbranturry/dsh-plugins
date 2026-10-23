@@ -174,8 +174,8 @@ check(bundleSource.startsWith('window.__ModuleLoader__.load({'), 'bundle registe
 // 没有 import，所以 runInThisContext 就是它真实的运行环境（用 vm sandbox 反而隔离掉了这些桩）
 vm.runInThisContext(bundleSource, { filename: 'client.js' })
 
-check(loaded.has('@stekovinbranturry/dsh-notify'), 'bundle declares the plugin module id')
-const factory = loaded.get('@stekovinbranturry/dsh-notify')
+check(loaded.has('@zhanghanxuan/dsh-notify'), 'bundle declares the plugin module id')
+const factory = loaded.get('@zhanghanxuan/dsh-notify')
 const exportsObject = factory((id) => {
   if (!SEEDS[id]) throw new Error('unexpected require: ' + id)
   return SEEDS[id]

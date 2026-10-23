@@ -12,6 +12,6 @@
 
 ## 首次发版
 
-`@stekovinbranturry/dsh-notify` 与 `@stekovinbranturry/dsh-worktree` 在 npm 上还不存在，需要仓库 secret `NPM_TOKEN`（npm Automation token，账号要拥有 `@stekovinbranturry` 这个 scope）。
+`@zhanghanxuan/dsh-notify` 与 `@zhanghanxuan/dsh-worktree` 在 npm 上还不存在，需要仓库 secret `NPM_TOKEN`（npm Automation token，账号要拥有 `@zhanghanxuan` 这个 scope）。
 
 仓库里已经放好一个 changeset（`rename-packages-to-scope.md`），所以第一次跑的顺序是：推 `main` → 自动开 "Version Packages" PR（0.1.0 → 0.2.0）→ 合掉它才真正发版。**没配 `NPM_TOKEN` 时第 3 步会失败，不会发出任何东西。**

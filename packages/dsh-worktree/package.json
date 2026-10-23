@@ -1,5 +1,5 @@
 {
-  "name": "@stekovinbranturry/dsh-worktree",
+  "name": "@zhanghanxuan/dsh-worktree",
   "publishConfig": {
     "access": "public"
   },
@@ -57,7 +57,7 @@
     "verify": "node scripts/verify.mjs",
     "test": "pnpm run build && pnpm run typecheck && pnpm run verify",
     "install:profile": "dsh plugin --profile web add .",
-    "uninstall:profile": "dsh plugin --profile web remove @stekovinbranturry/dsh-worktree",
+    "uninstall:profile": "dsh plugin --profile web remove @zhanghanxuan/dsh-worktree",
     "prepack": "pnpm run build"
   },
   "engines": {

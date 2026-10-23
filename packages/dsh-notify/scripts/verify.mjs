@@ -9,7 +9,7 @@ import path from 'node:path'
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const DIST = path.join(ROOT, 'dist')
 const BUNDLE = path.join(DIST, 'client.js')
-const ENTRY_ID = '@stekovinbranturry/dsh-notify'
+const ENTRY_ID = '@zhanghanxuan/dsh-notify'
 const SUITES = [
   ['host logic', path.join(ROOT, 'test', 'host.test.mjs')],
   ['client logic', path.join(ROOT, 'test', 'client.test.mjs')],

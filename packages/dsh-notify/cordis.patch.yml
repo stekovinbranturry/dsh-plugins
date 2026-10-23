@@ -2,4 +2,4 @@
 # 客户端 bundle 的 __ModuleLoader__ id 也必须是同一个字符串（客户端 watch/HMR 按它找入口）。
 - insert:
     - id: dsh-notify
-      name: '@stekovinbranturry/dsh-notify'
+      name: '@zhanghanxuan/dsh-notify'

@@ -1,5 +1,8 @@
 {
-  "name": "dsh-notify",
+  "name": "@stekovinbranturry/dsh-notify",
+  "publishConfig": {
+    "access": "public"
+  },
   "version": "0.1.0",
   "license": "MIT",
   "repository": {
@@ -51,7 +54,7 @@
     "verify": "node scripts/verify.mjs",
     "test": "pnpm run build && pnpm run typecheck && pnpm run test:client && pnpm run verify",
     "install:profile": "dsh plugin --profile web add .",
-    "uninstall:profile": "dsh plugin --profile web remove dsh-notify",
+    "uninstall:profile": "dsh plugin --profile web remove @stekovinbranturry/dsh-notify",
     "prepack": "pnpm run build",
     "test:client": "tsdown --config tsdown.test.config.ts"
   },

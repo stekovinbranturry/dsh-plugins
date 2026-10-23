@@ -67,7 +67,7 @@ vm.runInContext(source, sandbox, { filename: CLIENT })
 
 eq(loaded.length, 1, 'exactly one __ModuleLoader__.load call')
 const config = loaded[0]
-eq(config.id, 'dsh-worktree', 'bundle id')
+eq(config.id, '@stekovinbranturry/dsh-worktree', 'bundle id')
 eq(typeof config.factory, 'function', 'factory is a function')
 const requires = [...source.matchAll(/require\((['"])([^'"]+)\1\)/g)].map((match) => match[2])
 const SEEDS = ['react', 'react-dom', 'react-dom/client', 'react/jsx-runtime', '@deepseek-ai/dsh-client-ui-primitives']

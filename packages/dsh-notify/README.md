@@ -12,13 +12,13 @@
 git clone https://github.com/stekovinbranturry/dsh-plugins.git
 cd dsh-plugins
 pnpm install --frozen-lockfile
-pnpm --filter dsh-notify run build
-pnpm --filter dsh-notify run install:profile
+pnpm --filter @stekovinbranturry/dsh-notify run build
+pnpm --filter @stekovinbranturry/dsh-notify run install:profile
 ```
 
 这是本地 link 安装，请保留仓库目录。**安装后必须重启 DSH，并刷新页面。**
 浏览器系统通知需要在浏览器里点一次「允许」。
-卸载：`pnpm --filter dsh-notify run uninstall:profile`。
+卸载：`pnpm --filter @stekovinbranturry/dsh-notify run uninstall:profile`。
 
 ## 它解决什么
 
@@ -67,7 +67,7 @@ webhook** 三件事的体检结论直接写在卡片上。
 
 ```yaml
 - id: dsh-notify
-  name: dsh-notify
+  name: '@stekovinbranturry/dsh-notify'
   config:
     sound: false
 ```
@@ -91,10 +91,10 @@ webhook** 三件事的体检结论直接写在卡片上。
 ## 本地开发
 
 ```bash
-pnpm --filter dsh-notify run build
-pnpm --filter dsh-notify run dev:client
-pnpm --filter dsh-notify run dev:host
-pnpm --filter dsh-notify run test
+pnpm --filter @stekovinbranturry/dsh-notify run build
+pnpm --filter @stekovinbranturry/dsh-notify run dev:client
+pnpm --filter @stekovinbranturry/dsh-notify run dev:host
+pnpm --filter @stekovinbranturry/dsh-notify run test
 ```
 
 客户端改动构建后刷新页面生效；宿主改动要重启 DSH 再刷新。

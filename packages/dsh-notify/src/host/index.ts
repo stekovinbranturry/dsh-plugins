@@ -21,7 +21,7 @@ export const name = 'dsh-notify'
 export const inject: string[] = []
 
 /** 插件入口 id：必须与 package.json 的 name、客户端 bundle 的 __ModuleLoader__ id 一致 */
-export const ENTRY_ID = 'dsh-notify'
+export const ENTRY_ID = '@stekovinbranturry/dsh-notify'
 
 const CLIENT_BUNDLE = fileURLToPath(new URL('../client.js', import.meta.url))
 

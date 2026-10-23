@@ -12,12 +12,12 @@
 git clone https://github.com/stekovinbranturry/dsh-plugins.git
 cd dsh-plugins
 pnpm install --frozen-lockfile
-pnpm --filter dsh-worktree run build
-pnpm --filter dsh-worktree run install:profile
+pnpm --filter @stekovinbranturry/dsh-worktree run build
+pnpm --filter @stekovinbranturry/dsh-worktree run install:profile
 ```
 
 这是本地 link 安装，请保留仓库目录。**安装后必须重启 DSH，并刷新页面。**
-卸载：`pnpm --filter dsh-worktree run uninstall:profile`。
+卸载：`pnpm --filter @stekovinbranturry/dsh-worktree run uninstall:profile`。
 
 ## 它解决什么
 
@@ -62,10 +62,10 @@ pnpm --filter dsh-worktree run install:profile
 ## 本地开发
 
 ```bash
-pnpm --filter dsh-worktree run build
-pnpm --filter dsh-worktree run dev:client
-pnpm --filter dsh-worktree run dev:host
-pnpm --filter dsh-worktree run test
+pnpm --filter @stekovinbranturry/dsh-worktree run build
+pnpm --filter @stekovinbranturry/dsh-worktree run dev:client
+pnpm --filter @stekovinbranturry/dsh-worktree run dev:host
+pnpm --filter @stekovinbranturry/dsh-worktree run test
 ```
 
 客户端改动构建后刷新页面生效；宿主改动要重启 DSH 再刷新。

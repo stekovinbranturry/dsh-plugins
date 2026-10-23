@@ -8,7 +8,7 @@ import { defineConfig } from 'tsdown'
 import type { Plugin } from 'rolldown'
 
 // 必须与 package.json 的 name、cordis.patch.yml 的 id 一致：宿主按这个 id 找 bundle
-const ENTRY_ID = 'dsh-notify'
+const ENTRY_ID = '@stekovinbranturry/dsh-notify'
 const CSS_VIRTUAL_PREFIX = '\0dsh-notify-css:'
 // 虚拟 id 必须以非 css 扩展名结尾：tsdown 的 css-guard filter 只看结尾
 const CSS_VIRTUAL_SUFFIX = '.js'

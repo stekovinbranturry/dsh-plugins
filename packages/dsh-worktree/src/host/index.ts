@@ -24,6 +24,9 @@ import { apiPath } from '../shared/api.js'
 
 export const name = 'dsh-worktree'
 
+/** 插件入口 id：必须与 package.json 的 name、客户端 bundle 的 __ModuleLoader__ id 一致 */
+export const ENTRY_ID = '@stekovinbranturry/dsh-worktree'
+
 // 两类依赖都是软的：工具要 tools 服务、面板要 /api 承运通道，缺了只关掉对应能力。
 // 静态 inject 留空，headless / SDK 组合照样能装（拿到 git 能力层与三个模型工具）。
 export const inject: string[] = []
@@ -115,7 +118,7 @@ export function apply(ctx: Context, config?: Partial<Config>): void {
     console.log('[dsh-worktree] browser api on ' + METHODS.map(apiPath).join(' '))
   })
 
-  const watching = installClientWatch(ctx, name, CLIENT_BUNDLE)
+  const watching = installClientWatch(ctx, ENTRY_ID, CLIENT_BUNDLE)
   console.log(
     '[dsh-worktree] host loaded; worktreeRoot=' + state.config.worktreeRoot
       + (watching ? '; watching client bundle for HMR' : ''),

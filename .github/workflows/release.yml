@@ -1,0 +1,55 @@
+name: Release
+
+# Changesets 自动化（与 stekovinbranturry/click-to-agent 的 release.yml 同形）：
+# - 带 .changeset/*.md 的 PR 合并进 main 后，自动开一个 "Version Packages" PR
+# - 合并那个 PR 时构建并发版到 npm
+#
+# 需要仓库 secret NPM_TOKEN：npm 的 Automation token，且该账号要拥有
+# @stekovinbranturry 这个 scope（scope 包默认 restricted，靠 .changeset/config.json
+# 的 access: public 转公开）。
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Test
+        run: pnpm run test
+
+      - name: Create Release Pull Request or Publish
+        uses: changesets/action@v1
+        with:
+          version: pnpm changeset version
+          publish: pnpm release
+          title: "Version Packages"
+          commit: "chore(release): version packages"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

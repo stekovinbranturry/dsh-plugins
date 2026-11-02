@@ -1,71 +1,75 @@
 # dsh-worktree
 
-**一个任务一个工作区 —— 开 Git worktree、在里面起新会话，侧边栏点一下。**
+**一个任务一个工作区 —— 在 DSH 里创建 Git worktree、打开新会话，并行任务互不干扰。**
 
-![worktree 面板](docs/panel.png)
+![Worktree 面板](docs/panel.png)
 
 ## 安装
 
-需要 Node.js 24+、pnpm 11.25.0、Git 和已安装的 DSH Web。以下命令从仓库根目录运行：
+需要已安装的 DSH Web 和 Git。在终端运行：
 
 ```bash
-git clone https://github.com/stekovinbranturry/dsh-plugins.git
-cd dsh-plugins
-pnpm install --frozen-lockfile
-pnpm --filter @zhanghanxuan/dsh-worktree run build
-pnpm --filter @zhanghanxuan/dsh-worktree run install:profile
+dsh plugin --profile web add @zhanghanxuan/dsh-worktree
 ```
 
-这是本地 link 安装，请保留仓库目录。**安装后必须重启 DSH，并刷新页面。**
-卸载：`pnpm --filter @zhanghanxuan/dsh-worktree run uninstall:profile`。
+安装后重启 DSH，再刷新页面。使用其他 profile 时，将命令中的 `web` 换成对应名称。
 
-## 它解决什么
+## 使用
 
-多个任务并行时，在同一个工作目录里切分支是最容易出事的地方：一个任务改到一半，另一个任务要你切走，
-未提交的改动就得先 stash。Git worktree 是标准解法 —— 每个任务一个独立目录、一条独立分支 ——
-但它们散在文件系统里，开一个要 `git worktree add` + 开终端 + 起会话。
+### 为任务创建工作区
 
-这个插件把它收进侧边栏底部的一行「Worktree」：
+1. 打开一个 Git 仓库的会话，点击侧边栏底部的 **Worktree**。
+2. 确认顶部选择的是要操作的仓库。
+3. 选择 **已有分支**，或选择 **新建分支**并填写分支名、确认起点；新建分支默认从本地 `main` 创建，也可以手动选择其他起点。
+4. 点击 **创建并进入新会话**，直接在新工作区开始会话；只想先建好目录则点击 **只创建**。
 
-![侧边栏底部的入口](docs/entry.png)
+工作区默认放在仓库的 `.worktrees/` 下，各自使用独立目录和分支。若本地没有 `main`，请手动选择有效起点。需要更新远端分支列表时，点击右上角的**拉取远端分支**；此操作不会合并当前分支。
 
-- **开 worktree** —— 选已有分支或新建分支，目录落在仓库的 `.worktrees/` 下
-- **起新会话** —— 新会话的 cwd 直接冻在那个 worktree 里，模型一开始就站在正确的位置
-- **删 worktree** —— 归档它下面的会话 → 删目录 → 可选删分支
-- **交给模型** —— 四个工具：`worktree_list` / `worktree_create` / `worktree_open` / `worktree_remove`
+### 打开或删除已有工作区
 
-删的时候会拦下真正危险的情况：有未提交改动、被 `git worktree lock` 锁住、分支没合并、
-以及**正要删当前会话自己所在的目录**。写操作走 DSH 沙箱策略，只读会话或工作区外的目录提前拒绝，
-不会撞到 git 才报错。
+在 **已有 Worktree** 中，点击 **打开新会话**，即可继续在对应工作区处理任务。
 
-新开的 worktree 默认注册成一个独立项目，左侧栏按项目分组时嵌在仓库底下。在「已有 Worktree」那一栏点**打开新会话**，会话的 cwd 就直接冻在那个 worktree 里：
+![已有工作区](docs/worktree-list.png)
 
-![切到已有 worktree](docs/open-session.png)
+不再需要时，点击该工作区的删除按钮：
 
-| 已有 worktree | 删除确认 |
-|---|---|
-| ![已有 worktree](docs/worktree-list.png) | ![删除确认](docs/delete-confirm.png) |
+- 会归档其中的会话、注销工作区登记，并删除工作区目录。
+- 默认保留分支；删除本地分支或远端分支需要单独勾选。
+- 有未提交改动、工作区被锁定，或尝试删除当前会话所在目录时，会阻止删除。未合并的本地分支不会被自动强删。
 
-## 配置
+**强制删除会丢弃未提交改动，请先确认没有需要保留的内容。**
 
-同样没有设置面板 —— 在 DSH profile 的 `cordis.patch.yml` 里给 `dsh-worktree` 那条 entry 加 `config:`，重启 DSH 生效。
+### 让 AI 帮你操作
 
-| 项 | 默认 | 说明 |
-|---|---|---|
-| `worktreeRoot` | `.worktrees` | worktree 根目录，相对仓库根 |
-| `titleTemplate` | `wt: {name}` | 工作区（项目）名模板：`{compact}` `{spaced}` `{name}` `{branch}` `{path}` `{repo}` |
-| `sessionTitleTemplate` | `{spaced}` | 会话名模板；默认把连字符换成空格 |
-| `handoffTemplate` | `''` | 交接消息模板：`{name}` `{branch}` `{path}` `{repo}` `{task}`；默认空 = 新会话一条消息都不发 |
-| `registerProject` | `true` | 把 worktree 目录注册成独立项目（左侧栏按项目分组） |
-| `writeExclude` | `true` | 把 worktree 根目录写进共享 `.git/info/exclude` |
+也可以直接在对话中提出要求，例如：
 
-## 本地开发
+> 从 main 创建 feature/login 工作区，并在里面打开一个新会话。
+
+> 列出当前仓库的工作区。
+
+写操作仍受当前会话的权限限制，只读会话不能创建或删除工作区。
+
+### 调整设置
+
+打开 DSH **设置 → Worktree**。文本编辑后移开焦点保存，开关修改后自动保存。
+
+![Worktree 设置：路径与命名](docs/settings.png)
+
+- **路径与命名**：根目录相对仓库根，默认 `.worktrees`；工作区名和会话名可分别设置模板，例如 `{name}` 保留目录名，`{spaced}` 将连字符换成空格。
+- **交接消息**：设置新会话收到的消息模板，可使用 `{branch}`、`{path}` 等占位符；默认留空，不自动发送消息。
+- **项目登记**：选择是否注册为独立项目、是否将 worktree 根目录写入 `.git/info/exclude`，避免出现在 `git status` 中。
+
+<details>
+<summary>查看交接消息与项目登记设置（向下滚动）</summary>
+
+![Worktree 设置：交接消息与项目登记](docs/settings-project.png)
+
+</details>
+
+## 卸载
 
 ```bash
-pnpm --filter @zhanghanxuan/dsh-worktree run build
-pnpm --filter @zhanghanxuan/dsh-worktree run dev:client
-pnpm --filter @zhanghanxuan/dsh-worktree run dev:host
-pnpm --filter @zhanghanxuan/dsh-worktree run test
+dsh plugin --profile web remove @zhanghanxuan/dsh-worktree
 ```
 
-客户端改动构建后刷新页面生效；宿主改动要重启 DSH 再刷新。
+卸载后重启 DSH 并刷新页面。卸载插件不会自动删除已创建的工作区。

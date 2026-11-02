@@ -98,7 +98,7 @@ export function registerTools(ctx: Context, deps: ToolDeps): void {
         'root (default .worktrees/<name>). Give EITHER branch (check out an existing one) OR newBranch (create ' +
         'one, optionally from base). An existing local branch is checked out as-is; an existing origin/* branch ' +
         'becomes a new local branch of the same name tracking it; a newBranch is created from base (default ' +
-        'HEAD), and an origin/* base sets up tracking exactly like git itself does. Fails closed when the branch ' +
+        'main), and an origin/* base sets up tracking exactly like git itself does. Fails closed when the branch ' +
         'is already checked out in another worktree, a newBranch already exists locally, the base does not ' +
         'resolve, or the directory already exists. Set enter=true to also open a NEW ' +
         'session in that worktree (recommended); this session is not switched or moved.',
@@ -118,7 +118,7 @@ export function registerTools(ctx: Context, deps: ToolDeps): void {
         base: {
           type: 'string',
           description:
-            'Start point for newBranch: a local branch, an origin/* branch, or HEAD (default). Ignored when ' +
+            'Start point for newBranch: a local branch, an origin/* branch, or HEAD. Defaults to main. Ignored when ' +
             'branch is used.',
         },
         name: {

@@ -3,7 +3,7 @@
 // bundle 里只会留下 require("@deepseek-ai/dsh-client-ui-primitives")（见 tsdown.config.ts 的
 // neverBundle）。这里只声明本插件真正用到的那几个导出，够 tsc 抓住用错的 props 即可。
 declare module '@deepseek-ai/dsh-client-ui-primitives' {
-  import type { ButtonHTMLAttributes, ReactElement, ReactNode } from 'react'
+  import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactElement, ReactNode } from 'react'
 
   export function Button(props: ButtonHTMLAttributes<HTMLButtonElement> & {
     variant?: 'primary' | 'ghost' | 'outline' | 'toolbar'
@@ -102,4 +102,25 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
 
   /** 警告三角（平台现成，确认框里标「这个 worktree 在仓库外部」）。size 默认 16，颜色跟 currentColor。 */
   export function IconWarningTriangleOutlineRegular(props: { size?: number; className?: string }): ReactElement
+
+  /**
+   * 开关。真件渲染成 `<button role="switch" aria-checked>`，label 只当无障碍名、不落成文字
+   * （所以设置页自己画左侧的可见文案）。onChange 收到的是"下一个值"，不是事件。
+   */
+  export function Switch(props: {
+    checked: boolean
+    onChange: (next: boolean) => void
+    label: string
+    disabled?: boolean
+    title?: string
+    className?: string
+  }): ReactElement
+
+  /**
+   * 单行输入。真件把 className 落在包裹的 span 上、其余 props 透传给原生 `<input>`，
+   * 所以 defaultValue / onBlur / placeholder / disabled 都按原生语义走。
+   */
+  export function Input(
+    props: { icon?: ReactNode; className?: string } & InputHTMLAttributes<HTMLInputElement>,
+  ): ReactElement
 }

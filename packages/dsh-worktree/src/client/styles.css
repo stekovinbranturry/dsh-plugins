@@ -913,3 +913,127 @@
   font-size: 12px;
   line-height: 18px;
 }
+
+/*
+  设置页（DSH 设置对话框里的一页）。类名独立成 wt-set-* 前缀，不跟面板里的 wt-* 打架：
+  这一页渲染在设置对话框的 options 列里，不在侧边栏弹窗里。
+*/
+.wt-set {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.wt-set-intro {
+  margin: 0;
+  color: var(--dsw-alias-label-secondary, #6b7280);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.wt-set-group {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.wt-set-group-title {
+  margin: 0;
+  color: var(--dsw-alias-label-primary, #111827);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 20px;
+}
+
+.wt-set-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--dsw-alias-border-l2, #e5e7eb);
+}
+
+.wt-set-row:last-child {
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
+.wt-set-row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.wt-set-label {
+  color: var(--dsw-alias-label-primary, #111827);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.wt-set-hint {
+  color: var(--dsw-alias-label-tertiary, #9ca3af);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.wt-set-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.wt-set-field:last-child {
+  padding-bottom: 0;
+}
+
+.wt-set-textarea {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--dsw-alias-border-l2, #e5e7eb);
+  border-radius: var(--dsw-radius-sm, 6px);
+  background: var(--dsw-alias-bg-layer-1, #fff);
+  color: var(--dsw-alias-label-primary, #111827);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 20px;
+  resize: vertical;
+}
+
+.wt-set-textarea:focus-visible {
+  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, #4d6bfe);
+  outline-offset: 1px;
+}
+
+.wt-set-note {
+  margin: 0;
+  color: var(--dsw-alias-label-secondary, #6b7280);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.wt-set-status {
+  margin: 0;
+  color: var(--dsw-alias-label-secondary, #6b7280);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+/* 设置导航里 worktree 那一行：settings.section 契约没有 icon 字段，shell 一律给通用齿轮，
+   所以认领自己那一行后（见 settings-nav-icon.ts）把齿轮换成插件自己的 IconWorktree。
+   用 currentColor 做 mask：跟随导航的 hover / active 配色，也不改 shell 的 16px 图标节奏。 */
+[data-dsh-worktree-settings-nav] > svg:first-child {
+  display: none;
+}
+
+[data-dsh-worktree-settings-nav]::before {
+  content: '';
+  flex: none;
+  width: 16px;
+  height: 16px;
+  background: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 7h4a4 4 0 0 1 4 4v1a4 4 0 0 0 4 4h6'/%3E%3Cpath d='m17 12 4 4-4 4'/%3E%3Cpath d='M14 7h7'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 7h4a4 4 0 0 1 4 4v1a4 4 0 0 0 4 4h6'/%3E%3Cpath d='m17 12 4 4-4 4'/%3E%3Cpath d='M14 7h7'/%3E%3C/svg%3E") center / contain no-repeat;
+}

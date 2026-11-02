@@ -23,6 +23,7 @@ import STYLES from './styles.css'
 import type { ClientContext, SlotStandardProps } from './types.js'
 import { SLOT, SLOT_ID } from './constants.js'
 import { WorktreePanel } from './WorktreePanel.js'
+import { installSettingsSection } from './settings.js'
 
 // 行为单测直接吃这些纯函数，所以从入口再导出一次。
 export {
@@ -35,6 +36,24 @@ export {
   pickWorkspace,
   stepUsable,
 } from './branches.js'
+
+// 设置页的模型 / 纯函数 / 座位常量同样从入口再导出：行为单测直接吃它们
+// （组件本身带 hook，测试用 test/client.test.cjs 里的 React 替身按元素树走查）。
+export {
+  WorktreeSettingsModel,
+  WorktreeSettingsSection,
+  SETTINGS_FIELDS,
+  SETTINGS_LABEL,
+  SETTINGS_NS,
+  SETTINGS_ORDER,
+  SETTINGS_SECTION,
+  PATH_TEXT_FIELDS,
+  HANDOFF_TEXT_FIELDS,
+  REGISTER_TOGGLES,
+} from './settings.js'
+
+// 设置导航图标的认领逻辑（settings.section 没有 icon 字段，只能挂载后自己认领那一行）
+export { registerSettingsNavIcon, SETTINGS_NAV_ATTRIBUTE } from './settings-nav-icon.js'
 
 function insertStyles(css: string): () => void {
   if (typeof document === 'undefined') return function () {}
@@ -53,6 +72,9 @@ export const inject = ['slots']
 
 export function apply(ctx: ClientContext): void {
   ctx.effect(() => insertStyles(STYLES), 'dsh-worktree: styles')
+  // DSH 设置对话框里的一页（座位 settings.section）：宿主 Config 的 volatile 字段投影出来的
+  // 表单由插件自己画 —— 本版 DSH 没有客户端自动表单渲染器。
+  installSettingsSection(ctx)
   ctx.slots.inject(SLOT, () =>
     ctx.slots.register(
       { name: SLOT, id: SLOT_ID, order: 30, registrant: 'dsh-worktree' },

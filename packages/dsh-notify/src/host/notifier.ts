@@ -63,6 +63,12 @@ export class Notifier {
 
   updateConfig(config: NotifyConfig): void {
     this.config = config
+    // hello 已携带完整渠道快照：复用同一帧，让已连接页面与重连页面走同一条同步链。
+    this.broadcast('hello', this.hello())
+  }
+
+  private hello(): { ok: true; endpoint: string; channels: ReturnType<typeof channelsOf> } {
+    return { ok: true, endpoint: STREAM_PATH, channels: channelsOf(this.config) }
   }
 
   getConfig(): NotifyConfig {
@@ -167,7 +173,7 @@ export class Notifier {
   private deliver(wire: NotifyWire): void {
     const text = this.lastText
 
-    this.broadcast(wire)
+    this.broadcast('notify', wire)
     this.delivered += 1
 
     if (this.config.webhookUrl !== '') this.postWebhook(wire, text)
@@ -190,9 +196,9 @@ export class Notifier {
   }
 
   /** 给全部挂着的浏览器连推送一帧；断掉的连接顺手清掉 */
-  private broadcast(wire: NotifyWire): void {
+  private broadcast(event: 'notify' | 'hello', data: unknown): void {
     if (this.clients.size === 0) return
-    const frame = 'event: notify\ndata: ' + JSON.stringify(wire) + '\n\n'
+    const frame = 'event: ' + event + '\ndata: ' + JSON.stringify(data) + '\n\n'
     for (const [id, client] of this.clients) {
       try {
         client.res.write(frame)
@@ -201,6 +207,7 @@ export class Notifier {
         this.warn('client ' + id + ' write failed: ' + errText(error))
       }
     }
+    this.stopHeartbeatIfIdle()
   }
 
   private postWebhook(wire: NotifyWire, text: string): void {
@@ -269,11 +276,7 @@ export class Notifier {
     })
     const id = ++this.clientSeq
     this.clients.set(id, { id, res })
-    res.write('event: hello\ndata: ' + JSON.stringify({
-      ok: true,
-      endpoint: STREAM_PATH,
-      channels: channelsOf(this.config),
-    }) + '\n\n')
+    res.write('event: hello\ndata: ' + JSON.stringify(this.hello()) + '\n\n')
     this.ensureHeartbeat()
 
     const drop = (): void => {

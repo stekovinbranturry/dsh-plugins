@@ -262,7 +262,7 @@ export interface CreateInput extends RepoTarget {
   branch?: string | null
   /** 新分支名；给了它就建新分支（与 branch 二选一） */
   newBranch?: string | null
-  /** 新分支的起点：本地名 / `origin/x` / HEAD；空则 HEAD（主 worktree 当前提交） */
+  /** 新分支的起点：本地名 / `origin/x` / HEAD；空则 main */
   base?: string | null
   /** 目录名；空则从分支名派生 */
   name?: string | null
@@ -278,7 +278,7 @@ export interface CreateInput extends RepoTarget {
  *
  * - 已有分支：本地分支直接检出；远端跟踪分支建同名本地分支并设好 upstream。
  *   分支已经被别的 worktree 检出时直接拒（git 也会拒，但错误信息不如自己给的可读）。
- * - 新分支：本地不能已有同名分支，起点必须真实存在（默认 HEAD）。
+ * - 新分支：本地不能已有同名分支，起点必须真实存在（默认 main）。
  */
 async function resolveTarget(
   state: State,
@@ -300,7 +300,7 @@ async function resolveTarget(
     if (await git.branchExistsLocal(state.ctx, repoRoot, newBranch)) {
       return fail(ERR.branchExists, `本地已经有分支 ${newBranch} 了：改个名字，或选"已有分支"`)
     }
-    const base = (input.base ?? '').trim() || 'HEAD'
+    const base = (input.base ?? '').trim() || 'main'
     if (base !== 'HEAD') {
       if (!git.isValidBranchName(base)) return fail(ERR.badBranch, `起点不可用：${base}`)
       if (!(await git.revisionExists(state.ctx, repoRoot, base))) {

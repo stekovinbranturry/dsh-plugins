@@ -133,8 +133,8 @@ export function WorktreePanel({
   const [nameTouched, setNameTouched] = useState(false)
   /** 新建分支模式下要创建的分支名 */
   const [newBranch, setNewBranch] = useState('')
-  /** 新分支的起点（HEAD 或某个分支名） */
-  const [base, setBase] = useState('HEAD')
+  /** 新分支默认从 main 创建，也可手动选择其他起点。 */
+  const [base, setBase] = useState('main')
   /**
    * 删除是本插件唯一不可逆的动作，所以确认框不是「确定/取消」两态：
    * 失败原因留在框里（有未提交改动 → 才露出「强制删除」勾选；被 lock → 让人去 unlock），
@@ -189,7 +189,7 @@ export function WorktreePanel({
           return usable === undefined ? '' : usable.name
         })
         setBase((previous) =>
-          previous === 'HEAD' || result.branches.some((item) => item.name === previous) ? previous : 'HEAD',
+          previous === 'HEAD' || result.branches.some((item) => item.name === previous) ? previous : 'main',
         )
       } else {
         if (!fetchRemote) setData(null)

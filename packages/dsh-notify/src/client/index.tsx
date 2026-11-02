@@ -20,12 +20,13 @@ import {
   showBrowserNotification,
   titleMarker,
 } from './effects.js'
-import { ackEnabled, openStream, readBootMeta, requestTest } from './host.js'
+import { openStream, readBootMeta, requestTest } from './host.js'
 import { pageHidden, probeBrowserNotification } from './effects.js'
 import { createStore } from './store.js'
 import type { Store } from './store.js'
+import { installSettingsSection } from './settings.js'
 import { ToastStack } from './Toasts.js'
-import { DEFAULT_CHANNELS } from '../shared/channels.js'
+import { channelsOf, DEFAULT_CHANNELS } from '../shared/channels.js'
 import type { Channels, NotifyTestResult, NotifyWire, Permission } from './types.js'
 
 export const name = 'dsh-notify'
@@ -114,8 +115,9 @@ function reportLines(input: {
 export interface NotifyController {
   store: Store
   meta: BootMeta | null
-  /** 生效的渠道开关（meta 缺失时用与宿主同一份默认值） */
-  channels: Channels
+  /** 当前生效的渠道开关；初始 meta 缺失时用宿主同一份默认值。 */
+  readonly channels: Channels
+  updateChannels(channels: Channels): void
   notify(wire: NotifyWire): void
   /** 自检：返回页内提示条、浏览器系统通知与 webhook 的体检结论 */
   test(): Promise<string[]>
@@ -139,7 +141,8 @@ export function createController(options: {
   const store = createStore()
   const timers = new Map<number, ReturnType<typeof setTimeout>>()
   const meta = options.meta
-  const channels = meta?.channels ?? DEFAULT_CHANNELS
+  let channels = channelsOf(meta?.channels ?? DEFAULT_CHANNELS)
+  let disposed = false
 
   store.setPermission(notificationPermission())
 
@@ -173,12 +176,13 @@ export function createController(options: {
   }
 
   const notify = (wire: NotifyWire): void => {
+    if (disposed) return
     const visible = !pageHidden()
     // 人正看着这个对话时，回复 / 审批卡 / 提问卡本来就在屏幕上，再弹一条是纯噪音。
     // 只在页面可见时压制：切到别的软件或标签页之后，还得照常叫你 ——
     // 那时候"在对话里"这个前提已经不成立了。
     if (visible && isCurrent(wire.sessionId)) return
-    if (ackEnabled(meta)) {
+    if (channels.ack) {
       store.append(wire)
       schedule(wire.seq, wire.kind)
     } else {
@@ -197,7 +201,7 @@ export function createController(options: {
           // 系统通知的点击发生在别的窗口栈里：先把 DSH 的标签页拉到前面，再跳会话
           if (typeof window !== 'undefined') window.focus()
           if (options.openSession && wire.sessionId !== '') options.openSession(wire.sessionId)
-          if (ackEnabled(meta)) store.dismiss(wire.seq)
+          if (channels.ack) store.dismiss(wire.seq)
         },
       })
     }
@@ -206,7 +210,12 @@ export function createController(options: {
   return {
     store,
     meta,
-    channels,
+    get channels() { return channels },
+    updateChannels(next) {
+      if (disposed) return
+      channels = channelsOf(next)
+      if (!channels.title) resetTitleMarker()
+    },
     notify,
     async test() {
       // 自检：既问一遍宿主（验证"宿主 → 页面"这条链路），也本地补三条假的，让控制台里
@@ -252,6 +261,7 @@ export function createController(options: {
       store.setPermission(notificationPermission())
     },
     dispose() {
+      disposed = true
       for (const timer of timers.values()) clearTimeout(timer)
       timers.clear()
     },
@@ -307,6 +317,9 @@ export function apply(ctx: ClientContext): void {
   const meta = readBootMeta()
   ctx.effect(() => insertStyles(STYLES), 'dsh-notify: styles')
 
+  // DSH 设置面板里的"通知"页。拿不到 slots / configForms 的组合（headless、SDK）什么都不做。
+  installSettingsSection(ctx)
+
   const container = typeof document === 'undefined' ? null : document.createElement('div')
   if (container) {
     container.setAttribute('data-dsh-notify-root', '')
@@ -339,6 +352,7 @@ export function apply(ctx: ClientContext): void {
     meta?.endpoint ?? '/dsh-notify/stream',
     (wire) => controller.notify(wire),
     (status) => controller.store.setConnected(status === 'open'),
+    (channels) => controller.updateChannels(channels),
   )
 
   // 用户第一次点页面时顺手申请系统通知授权。

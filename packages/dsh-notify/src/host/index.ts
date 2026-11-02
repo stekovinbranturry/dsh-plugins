@@ -9,9 +9,11 @@ import type { Context } from '@deepseek-ai/cordis'
 
 import { METHODS, STREAM_PATH } from './constants.js'
 import { Config, resolveConfig } from './config.js'
-import type { NotifyConfig } from './config.js'
+import type { NotifyConfig, NotifyConfigRuntime } from './config.js'
 import { wireNotifyEvents } from './events.js'
 import { Notifier } from './notifier.js'
+import { service } from './services.js'
+import type { SettingsForms } from './services.js'
 import { installWebSurface } from './web.js'
 
 export const name = 'dsh-notify'
@@ -26,10 +28,26 @@ export const ENTRY_ID = '@zhanghanxuan/dsh-notify'
 const CLIENT_BUNDLE = fileURLToPath(new URL('../client.js', import.meta.url))
 
 export { Config, resolveConfig }
-export type { NotifyConfig }
+export type { NotifyConfig, NotifyConfigRuntime }
 
-export function apply(ctx: Context, config?: Partial<NotifyConfig>): void {
+export function apply(ctx: Context, config?: Partial<NotifyConfigRuntime>): void {
   const notifier = new Notifier(ctx, resolveConfig(config))
+
+  // 设置面板改的是 volatile 字段：Loader 不重挂插件，只把新值原地写进 Config 的引用盒子，
+  // 再给 owner fiber 广播这个事件（见 volatile.ts）。不在这里重新解析一遍，业务侧就还拿着
+  // apply 那一刻的快照 —— 表现是"设置改完要重启才生效"。解析出来的仍是普通对象，直接换掉。
+  ctx.on('loader/volatile-update' as never, (() => {
+    notifier.updateConfig(resolveConfig(config))
+  }) as never)
+
+  // 设置页策略：本插件自带页面，关掉自动页（官方约定，见 services.ts 的 SettingsForms）。
+  // 与 webServer 同理用 ctx.inject 而不是静态 inject：settings 缺席（headless / SDK）时
+  // 插件照装，它晚到或被替换时这个 child 重跑、策略跟着走。
+  ctx.inject(['settings'], (scope) => {
+    const settings = service<SettingsForms>(scope, 'settings')
+    if (!settings) return
+    scope.effect(() => settings.configure({ auto: false }, scope.fiber), 'dsh-notify: settings policy')
+  })
 
   // 事件接线（三类来源）：不依赖 webServer，先接上
   wireNotifyEvents(ctx, notifier)

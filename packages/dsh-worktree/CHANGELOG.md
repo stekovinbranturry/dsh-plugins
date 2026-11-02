@@ -1,5 +1,11 @@
 # @zhanghanxuan/dsh-worktree
 
+## 0.2.1
+
+### Patch Changes
+
+- 新增 Worktree 设置面板，支持保存配置。新建 worktree 分支默认从本地 main 创建，保留手动选择起点；缺少 main 时明确报错，不再默认使用当前分支。精简安装使用文档，补充真实设置截图及市场截图清单。
+
 ## 0.2.0
 
 ### Minor Changes

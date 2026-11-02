@@ -87,8 +87,11 @@ export function ToastCard(props: ToastCardProps): React.ReactElement {
               开启系统通知
             </Button>
           ) : null}
+          {/* 「打开会话」和"点卡片"走同一个入口：跳过去之后这条就没用了，顺手收掉。
+              直接接 props.onOpen 会只跳不收，卡片要一直杵到 TTL 到点（approval /
+              question 是 20 秒），看着就是"点了打开会话 toast 不消失"。 */}
           {openable ? (
-            <Button variant="primary" size="sm" onClick={props.onOpen}>
+            <Button variant="primary" size="sm" onClick={() => activateCard(openable, activate)}>
               打开会话
             </Button>
           ) : null}

@@ -17,7 +17,7 @@ import {
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
-import { apply, name, inject } from '../dist/host/index.js'
+import { apply, name, inject, Config, resolveConfig } from '../dist/host/index.js'
 import { METHODS } from '../dist/host/api.js'
 import {
   parseWorktreeList,
@@ -33,6 +33,7 @@ import {
   DEFAULT_HANDOFF_TEMPLATE,
   DEFAULT_SESSION_TITLE_TEMPLATE,
   DEFAULT_TITLE_TEMPLATE,
+  DEFAULT_WORKTREE_ROOT,
 } from '../dist/host/constants.js'
 
 const { basename, join } = path
@@ -169,6 +170,10 @@ function makeFixture(options) {
     createRequests: [],
     /** archiveSession 的调用记录（删 worktree 的第一步） */
     archived: [],
+    /** apply 里 ctx.on 注册的事件监听（loader/volatile-update 就靠它验） */
+    listeners: [],
+    /** settings.configure 的调用记录（设置页策略） */
+    settingsCalls: [],
   }
   const callerCwd = o.cwd ?? repo
   state.sessions.set('sess-1', { id: 'sess-1', header: { id: 'sess-1', cwd: callerCwd } })
@@ -181,6 +186,11 @@ function makeFixture(options) {
       state.disposers.push(fn())
       return () => {}
     },
+    // 真 Cordis 的 ctx.on 把监听挂到事件总线上；夹具记下来，测试自己 emit（面板改值就这一条路）
+    on(eventName, handler) {
+      state.listeners.push({ eventName, handler })
+      return () => {}
+    },
     inject(names, callback) {
       // 真 Cordis 等所有 named 服务就位才跑回调；夹具照做，否则"缺 connection 时不注册"
       // 这条断言测不到
@@ -190,6 +200,16 @@ function makeFixture(options) {
     },
     get(key) {
       if (key === 'tools') return tools
+      // o.settings === true 时装上设置服务：验"自带设置页 → 关掉自动页"这条策略
+      if (key === 'settings') {
+        if (o.settings !== true) return undefined
+        return {
+          configure(presentation, owner) {
+            state.settingsCalls.push({ presentation, owner })
+            return () => {}
+          },
+        }
+      }
       if (key === 'connection') {
         if (o.noConnection) return undefined
         return {
@@ -338,6 +358,101 @@ eq(JSON.stringify(inject), '[]', '静态 inject 为空：工具与面板接口�
   eq(noConn.state.tools.length, 4, '工具照常注册')
   cleanup(noConn)
 
+// ── volatile 是设置面板的硬门槛 ───────────────────────────────────────────
+// dsh-settings 的 describe() 只把"有 volatile 字段"的 profile 条目投影成表单
+// （volatileForm(schema) === undefined 就直接 return []），所以漏标一个字段不是"少个开关"，
+// 而是整个 dsh-worktree 条目在设置面板里根本不出现。这条断言就是为了钉住这一点。
+console.log('\n== config schema: volatile 门槛 ==')
+const CONFIG_FIELDS = [
+  'worktreeRoot',
+  'titleTemplate',
+  'sessionTitleTemplate',
+  'handoffTemplate',
+  'registerProject',
+  'writeExclude',
+]
+eq(Object.keys(Config.dict).sort().join(','), CONFIG_FIELDS.slice().sort().join(','), 'Config 字段与 resolveConfig 一一对应')
+for (const field of CONFIG_FIELDS) {
+  const fieldSchema = Config.dict[field]
+  eq(
+    fieldSchema === undefined ? undefined : fieldSchema.meta.volatile,
+    true,
+    field + ' 标了 .volatile()（漏标 = 设置面板整条不出现）',
+  )
+}
+
+// ── volatile 引用盒子必须解包 ─────────────────────────────────────────────
+// 盒子是对象：老写法 `source.registerProject !== false` 恒真、`(source.worktreeRoot ?? '').trim()`
+// 直接 TypeError。裸值（headless / SDK）与盒子走同一条路，语义必须一致。
+console.log('\n== resolveConfig 解包 volatile 引用盒子 ==')
+// 盒子的判据是 cosmokit 的官方协议：Symbol.for('cosmokit.volatile.write') in value
+// （cosmokit `isVolatile()` 就这一行；`createVolatile()` 产出的盒子必然带这个符号）。
+// 这里刻意不放松成"有 get() 就当盒子"——那会和上游判据分叉，也会把普通对象误当引用。
+const VOLATILE_WRITE = Symbol.for('cosmokit.volatile.write')
+const box = (value) => ({ get: () => value, [VOLATILE_WRITE]: () => {} })
+
+eq(resolveConfig(undefined).worktreeRoot, DEFAULT_WORKTREE_ROOT, '没有 config 时用默认根')
+eq(resolveConfig({ worktreeRoot: box('.wt') }).worktreeRoot, '.wt', '解包盒子里的 worktreeRoot')
+eq(resolveConfig({ worktreeRoot: '.wt' }).worktreeRoot, '.wt', '裸值与盒子同义')
+eq(resolveConfig({ worktreeRoot: box('  ') }).worktreeRoot, DEFAULT_WORKTREE_ROOT, '盒子里的空白串回退默认根')
+eq(resolveConfig({ worktreeRoot: '  ' }).worktreeRoot, DEFAULT_WORKTREE_ROOT, '裸空白串回退默认根')
+eq(resolveConfig({ titleTemplate: box('wt-{name}') }).titleTemplate, 'wt-{name}', '解包 titleTemplate')
+eq(resolveConfig({ sessionTitleTemplate: box('{spaced}') }).sessionTitleTemplate, '{spaced}', '解包 sessionTitleTemplate')
+eq(resolveConfig({ handoffTemplate: box('') }).handoffTemplate, '', '解包空模板（= 不发交接消息）')
+eq(resolveConfig({ registerProject: box(false) }).registerProject, false, '盒子里的 false 能关掉 registerProject')
+eq(resolveConfig({ registerProject: false }).registerProject, false, '裸 false 能关掉 registerProject')
+eq(resolveConfig({ registerProject: box(true) }).registerProject, true, '盒子里的 true 保持开启')
+eq(resolveConfig({ writeExclude: box(false) }).writeExclude, false, '盒子里的 false 能关掉 writeExclude')
+eq(resolveConfig({ writeExclude: false }).writeExclude, false, '裸 false 能关掉 writeExclude')
+eq(resolveConfig({}).registerProject, true, '没给字段时默认开')
+
+// 边界：手搓的、没有 write 符号的 { get } 不是协议盒子，不会被解包。
+// 钉住它是为了说明"解包"不是"看谁有 get()"——真盒子由 createVolatile() 产出，一定带符号。
+let bareBoxUnwrapped = true
+try {
+  resolveConfig({ worktreeRoot: { get: () => '.wt' } })
+} catch {
+  bareBoxUnwrapped = false
+}
+eq(bareBoxUnwrapped, false, '无 write 符号的 { get } 不算引用盒子（与 cosmokit isVolatile 判据一致）')
+
+// ── 面板改值不重挂插件，只写盒子 + 广播事件 ────────────────────────────────
+// Loader 的 _commitVolatile() 不重跑 apply：它把新值写进引用盒子，再 emit
+// loader/volatile-update。插件不监听就永远拿着 apply 时刻的快照（"改完要重启"）。
+console.log('\n== 面板改值：loader/volatile-update 就地生效 ==')
+const boxedRoot = { current: '.worktrees' }
+const liveRoot = {
+  get: () => boxedRoot.current,
+  [Symbol.for('cosmokit.volatile.write')]: (next) => {
+    boxedRoot.current = next
+  },
+}
+const V = makeFixture({ config: { worktreeRoot: liveRoot } })
+let rV = await call(V, 'POST', 'context', { sessionId: 'sess-1' })
+eq(rV.json.worktreeRoot, join(V.repo, '.worktrees'), 'apply 时读的是盒子里的当前值')
+const volatileListeners = V.state.listeners.filter((entry) => entry.eventName === 'loader/volatile-update')
+eq(volatileListeners.length, 1, 'apply 订阅了 loader/volatile-update')
+// 模拟 Loader：原地写盒子 + 广播事件，不重跑 apply
+boxedRoot.current = '.trees'
+for (const entry of volatileListeners) entry.handler([['worktreeRoot']])
+rV = await call(V, 'POST', 'context', { sessionId: 'sess-1' })
+eq(rV.json.worktreeRoot, join(V.repo, '.trees'), '改值后无需重启即生效（重新 resolve 了 state.config）')
+cleanup(V)
+
+// ── 设置页策略：自带页面 → 关掉自动页 ──────────────────────────────────────
+console.log('\n== settings policy ==')
+const noSettings = makeFixture({})
+eq(noSettings.state.settingsCalls.length, 0, '没有 settings 服务时不报错、也不调 configure')
+cleanup(noSettings)
+const withSettings = makeFixture({ settings: true })
+eq(withSettings.state.settingsCalls.length, 1, 'settings 到位时声明一次策略')
+eq(
+  withSettings.state.settingsCalls[0] === undefined ? undefined : withSettings.state.settingsCalls[0].presentation.auto,
+  false,
+  '自带设置页 → auto:false（不与自动页重复）',
+)
+cleanup(withSettings)
+
 console.log('\n== pure helpers ==')
 ok(isValidName('alpha-1'), 'isValidName accepts lowercase/digit/hyphen')
 ok(!isValidName('Alpha'), 'isValidName is case-sensitive')
@@ -413,6 +528,8 @@ eq(openTool.parameters.required.join(','), 'name', 'open requires the name')
 eq(listTool.parameters.required, undefined, 'list requires nothing')
 includes(createTool.description, 'EITHER branch', 'create description spells out the two modes')
 includes(createTool.description, 'newBranch', 'create description mentions inventing a branch')
+includes(createTool.description, 'main)', 'create description documents the main default')
+includes(createTool.parameters.properties.base.description, 'Defaults to main', 'base parameter documents the main default')
 eq(createTool.output.schema.type, 'string', 'tools return a canonical string')
 eq(
   JSON.stringify(listTool.output.render({}, 'text')),
@@ -629,7 +746,10 @@ eq(r.json.error, 'bad-worktree-name', 'a bad directory name is refused')
 r = await call(A, 'POST', 'create', { sessionId: 'sess-1', branch: 'feature/name-check', name: 'feature-local-only' })
 eq(r.json.error, 'worktree-exists', 'an existing directory is refused')
 
-console.log('\n== create a NEW branch (no explicit base: HEAD) ==')
+console.log('\n== create a NEW branch (default main, not current HEAD) ==')
+git(['checkout', '-q', '-b', 'feature/current'], A.repo)
+git(['commit', '-q', '--allow-empty', '-m', 'current branch only'], A.repo)
+ok(headOf(A.repo, 'HEAD') !== headOf(A.repo, 'refs/heads/main'), 'current branch diverges from main')
 r = await call(A, 'POST', 'create', { sessionId: 'sess-1', newBranch: 'feature/fresh', name: 'fresh-head' })
 ok(r.json && r.json.ok === true, 'create-new ok', JSON.stringify(r.json))
 const freshPath = join(A.repo, '.worktrees', 'fresh-head')
@@ -637,7 +757,7 @@ eq(r.json.item.name, 'fresh-head', 'the explicit directory name is honoured')
 eq(r.json.item.branch, 'feature/fresh', 'the item reports the invented branch')
 eq(r.json.item.path, freshPath, 'item path')
 ok(existsSync(freshPath), 'the worktree directory exists on disk')
-eq(headOf(A.repo, 'refs/heads/feature/fresh'), headOf(A.repo, 'HEAD'), 'the new branch starts at the repo HEAD')
+eq(headOf(A.repo, 'refs/heads/feature/fresh'), headOf(A.repo, 'refs/heads/main'), 'the new branch defaults to main rather than current HEAD')
 eq(headOf(freshPath, 'HEAD'), headOf(A.repo, 'refs/heads/feature/fresh'), 'the worktree sits on the new branch')
 let upstream = ''
 try {
@@ -646,6 +766,25 @@ try {
   upstream = ''
 }
 eq(upstream, '', 'a brand-new branch gets no upstream')
+r = await call(A, 'POST', 'create', { sessionId: 'sess-1', newBranch: 'feature/blank-base', base: '   ' })
+ok(r.json.ok, 'blank base uses the default')
+eq(headOf(r.json.item.path, 'HEAD'), headOf(A.repo, 'refs/heads/main'), 'blank base also starts at main')
+r = await call(A, 'POST', 'create', { sessionId: 'sess-1', newBranch: 'feature/explicit-head', base: 'HEAD' })
+ok(r.json.ok, 'explicit HEAD remains supported')
+eq(headOf(r.json.item.path, 'HEAD'), headOf(A.repo, 'HEAD'), 'explicit HEAD uses the current branch tip')
+git(['checkout', '-q', 'main'], A.repo)
+
+console.log('\n== missing main does not fall back to HEAD or origin/main ==')
+{
+  const missingMain = makeFixture()
+  git(['branch', '-m', 'main', 'other'], missingMain.repo)
+  const refused = await call(missingMain, 'POST', 'create', { sessionId: 'sess-1', newBranch: 'feature/no-main' })
+  eq(refused.json.error, 'base-not-found', 'missing default main is refused')
+  includes(refused.json.detail, 'main', 'the refusal names main')
+  ok(!existsSync(join(missingMain.repo, '.worktrees', 'feature-no-main')), 'missing main creates no worktree')
+  eq(git(['branch', '--list', 'feature/no-main'], missingMain.repo).trim(), '', 'missing main creates no branch')
+  cleanup(missingMain)
+}
 
 console.log('\n== create a NEW branch from a remote tip ==')
 r = await call(A, 'POST', 'create', {

@@ -157,6 +157,16 @@ export interface Connection {
   }
 }
 
+/**
+ * 设置服务（@deepseek-ai/dsh-settings，ctx.settings）。这里只用到"声明自己那条页的策略"：
+ * 本插件自带设置页（浏览器半注册进 settings.section），按官方约定把自动页关掉 —— 将来真有
+ * 客户端照 schema 自动建页时不会和自带页重复。策略只影响页的生成，不影响配置读写。
+ */
+export interface SettingsForms {
+  /** owner 传本插件 fiber：晚到或被替换的 settings 服务都能把策略认到同一个插件上 */
+  configure(presentation: { auto?: boolean }, owner?: unknown): () => void
+}
+
 /** 结构化取服务：缺了就返回 undefined，调用方决定降级还是报错 */
 export function service<T>(ctx: Context, name: string): T | undefined {
   try {

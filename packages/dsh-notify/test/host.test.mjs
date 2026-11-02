@@ -451,6 +451,42 @@ console.log('\n== 围栏与认证：问承运层要裁定 ==')
   check(noConnHub.stream === undefined, '没有 connection 服务时不开长连（宁可不服务）')
 }
 
+// ── 配置更新沿现有 hello 帧推给全部 SSE 客户端 ─────────────────────────────
+console.log('\n== live channel updates ==')
+{
+  const live = new notifierModule.Notifier(ctx, defaults)
+  const liveHub = makeHub()
+  const first = liveHub.fakeResponse()
+  const second = liveHub.fakeResponse()
+  live.handleStream(req, first)
+  live.handleStream(req, second)
+  const hello = (response) => JSON.parse(/^event: hello\ndata: (.*)$/m.exec(response.chunks.at(-1))[1])
+  eq(hello(first).channels.ack, true, 'initial hello carries current channels')
+  const disabled = { ack: false, browser: false, sound: false, title: false }
+  live.updateConfig({ ...defaults, ...disabled })
+  eq(JSON.stringify(hello(first).channels), JSON.stringify(disabled), 'existing first client receives all disabled channels')
+  eq(JSON.stringify(hello(second).channels), JSON.stringify(disabled), 'existing second client receives the same snapshot')
+  eq(hello(first).endpoint, live.endpoint(), 'updates retain the initial hello format')
+  eq(live.deliveredCount, 0, 'channel updates are not counted as notifications')
+  const reconnected = liveHub.fakeResponse()
+  live.handleStream(req, reconnected)
+  eq(JSON.stringify(hello(reconnected).channels), JSON.stringify(disabled), 'a new connection receives the latest channels')
+  first.write = () => { throw new Error('disconnected') }
+  live.updateConfig(defaults)
+  eq(live.clientCount, 2, 'a failed config write drops only the broken client')
+  check(Object.values(hello(second).channels).every((value) => value === true), 'healthy clients receive re-enabled channels after a failed peer')
+  const closedCount = second.chunks.length
+  second.listeners.get('close')()
+  live.updateConfig({ ...defaults, sound: false })
+  eq(second.chunks.length, closedCount, 'closed clients receive no further config frames')
+  eq(hello(reconnected).channels.sound, false, 'remaining client continues to receive changes')
+  live.dispose()
+  check(reconnected.closed, 'disposing ends the remaining SSE connection')
+  const disposedCount = reconnected.chunks.length
+  live.updateConfig(defaults)
+  eq(reconnected.chunks.length, disposedCount, 'disposing removes all clients from live config delivery')
+}
+
 // ── 全渠道关闭 ────────────────────────────────────────────────────────────
 console.log('\n== all channels disabled ==')
 const mutedNotifier = new notifierModule.Notifier(ctx, {

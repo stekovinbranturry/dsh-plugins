@@ -125,6 +125,9 @@ const ReactShim = {
   useSyncExternalStore(_subscribe, snapshot) {
     return snapshot()
   },
+  Fragment: function Fragment(props) {
+    return jsxNode('fragment', props)
+  },
 }
 function jsxNode(type, props, key) {
   const merged = Object.assign({}, props)
@@ -179,6 +182,17 @@ const PrimitivesShim = {
   IconWarningTriangleOutlineRegular(props) {
     return jsxNode('warn', props)
   },
+  /**
+   * 设置页用的两个件。真 Switch 是 `<button role="switch" aria-checked>`（label 只当无障碍名、
+   * 不落成文字），这里保留 props 好断言；真 Input 把 className 落在包裹 span 上、其余透传给
+   * 原生 input，这里直接透传，断言看 defaultValue / onBlur / disabled。
+   */
+  Switch(props) {
+    return jsxNode('switch', props)
+  },
+  Input(props) {
+    return jsxNode('Input', props)
+  },
 }
 const moduleExports = config.factory((id) => {
   if (id === 'react') return ReactShim
@@ -201,12 +215,90 @@ const disposers = []
 /** 0.1.7 的切主视图动作：uiWorkspace.openSession(id)（sessions.open 已删） */
 const opened = []
 const uiWorkspace = { openSession: (id) => opened.push(id) }
+
+// 设置页那一路的替身：插件用 ctx.inject(['slots','configForms']) 单开一个子 scope，
+// 所以这里给子 scope 自己的一份 slots/configForms，不跟侧边栏入口的注册混在一起。
+const settingsWrites = []
+const settingsRegistrations = []
+const settingsSlotInjects = []
+const settingsEffects = []
+const settingsDeps = []
+let settingsServed = null
+let settingsNamespace = null
+const settingsView = {
+  worktreeRoot: '.worktrees',
+  titleTemplate: '{compact} {name}',
+  sessionTitleTemplate: '{spaced}',
+  handoffTemplate: '',
+  registerProject: true,
+  writeExclude: true,
+}
+const settingsForm = {
+  getSnapshot: () =>
+    Object.assign(
+      {
+        status: 'ready',
+        value: Object.assign({}, settingsView),
+        base: undefined,
+        user: undefined,
+        revision: 3,
+        writable: true,
+      },
+      settingsOverrides,
+    ),
+  subscribe: () => () => {},
+  set: (field, value) => {
+    settingsWrites.push(['set', field, value])
+    return Promise.resolve(true)
+  },
+  unset: (field) => {
+    settingsWrites.push(['unset', field])
+    return Promise.resolve(true)
+  },
+}
+/** 逐个用例覆盖快照字段（status / writable / value 都为它让路） */
+let settingsOverrides = {}
+const settingsSlots = {
+  inject(slotName, callback) {
+    settingsSlotInjects.push(slotName)
+    return callback()
+  },
+  register(registration, component) {
+    settingsRegistrations.push({ registration, component })
+    return () => {}
+  },
+}
+const settingsForms = {
+  get(namespace) {
+    settingsNamespace = namespace
+    return settingsForm
+  },
+  whileServed(namespaces, register) {
+    settingsServed = { namespaces, register }
+    return () => {}
+  },
+}
+const settingsScope = {
+  effect(fn, label) {
+    settingsEffects.push(label)
+    return fn()
+  },
+  get: (name) => (name === 'slots' ? settingsSlots : name === 'configForms' ? settingsForms : undefined),
+  inject: () => undefined,
+  slots: settingsSlots,
+}
+
 const ctx = {
   effect(fn) {
     disposers.push(fn())
     return () => {}
   },
   get: (name) => (name === 'uiWorkspace' ? uiWorkspace : undefined),
+  inject(deps, callback) {
+    settingsDeps.push(deps)
+    callback(settingsScope)
+    return undefined
+  },
   slots: {
     inject(slotName, callback) {
       injected.push(slotName)
@@ -400,7 +492,7 @@ const presetDelete = (del, rest) => [
 function mainStates(rest) {
   const main = rest.slice(0, 9)
   while (main.length < 8) main.push('')
-  if (main.length < 9) main.push('HEAD')
+  if (main.length < 9) main.push('main')
   return main
 }
 const REPO_WORKSPACES = {
@@ -753,6 +845,11 @@ disabledOption.props.onMouseDown({ preventDefault: () => {} })
 eq(stateSets.length, 0, 'a checked-out branch cannot be picked')
 
 console.log('\n== creating a NEW branch ==')
+stateIndex = 0
+presets = preset(true, 'create', [DATA, false, null, 'new', '', '', false, 'feature/default'])
+presets[S_BASE] = undefined // 不预置起点，验证组件真正的 useState 默认值。
+const defaultBasePanel = expand(registrations[0].component(standardProps(REPO_WORKSPACES, REPO_SESSIONS)))
+eq(flatten(defaultBasePanel).find((e) => e.kind === 'element' && e.props['aria-label'] === '起点').props.value, 'main', 'new branches initially select main')
 // 起点清单 = HEAD + 全部分支，已检出的分支照样能当起点
 const bases = moduleExports.baseItems(DATA.branches)
 eq(bases.length, 4, 'HEAD is offered alongside every branch')
@@ -965,7 +1062,7 @@ async function clickChecks() {
   eq(fetchCalls[0].body.sessionId, 's1', 'fetch carries the caller session for sandbox checks')
   eq(stateSets.find((set) => set.index === S_DATA).value, fetchedData, 'the fetched context replaces the branch list')
   eq(stateSets.find((set) => set.index === S_BRANCH).value, 'feature/local-only', 'fetch preserves a still-existing selection')
-  eq(stateSets.find((set) => set.index === S_BASE).value, 'HEAD', 'fetch preserves the HEAD base')
+  eq(stateSets.find((set) => set.index === S_BASE).value, 'main', 'fetch preserves the main default')
   eq(stateSets.filter((set) => set.index === S_MESSAGE).at(-1).value, '已拉取 origin 的远端分支', 'fetch success is confirmed')
   eq(stateSets.filter((set) => set.index === S_BUSY).at(-1).value, false, 'fetch releases the busy state')
 
@@ -984,6 +1081,16 @@ async function clickChecks() {
   refreshButton.props.onClick()
   await tick()
   eq(fetchCalls[0].url, '/api/dsh-worktree.context', 'ordinary refresh remains a read-only context request')
+
+  for (const [previous, expected] of [['HEAD', 'HEAD'], ['origin/feature/remote-only', 'origin/feature/remote-only'], ['gone', 'main']]) {
+    stateIndex = 0
+    presets = preset(true, 'create', [DATA, false, null, 'new', '', '', false, 'feature/new', previous])
+    const baseRefreshPanel = expand(registrations[0].component(standardProps(REPO_WORKSPACES, REPO_SESSIONS)))
+    stateSets = []
+    fetchButton(baseRefreshPanel).props.onClick()
+    await tick()
+    eq(stateSets.find((set) => set.index === S_BASE).value, expected, 'refresh preserves explicit bases and resets missing bases to main: ' + previous)
+  }
 
   sandbox.fetch = async () => ({ ok: true, json: async () => ({ ok: false, error: 'git-fetch-failed', detail: 'network unavailable' }) })
   stateSets = []
@@ -1339,6 +1446,252 @@ async function deleteChecks() {
   ok(has(setOf(S_DELETE_FAILURE).error, '删除失败'), 'a transport failure is reported in the box')
   eq(setOf(S_DELETING), false, 'a transport failure releases the pending state')
 }
+
+// ── 设置页（DSH 设置对话框里的一页） ─────────────────────────────────────
+console.log('\n== settings page ==')
+
+// 跨半对账：这一页覆盖的字段必须与宿主 Config 的键集一模一样。
+// 宿主加了配置项、设置页忘了补 = 用户永远看不到那个开关，这条当场红。
+const hostConfig = require(path.join(__dirname, '..', 'dist', 'host', 'index.js'))
+eq(
+  JSON.stringify([...moduleExports.SETTINGS_FIELDS].sort()),
+  JSON.stringify(Object.keys(hostConfig.Config.dict).sort()),
+  'the page covers exactly the host Config fields',
+)
+eq(moduleExports.SETTINGS_NS, 'dsh-worktree', 'the namespace is the profile entry id, not the package name')
+eq(moduleExports.SETTINGS_SECTION, 'settings.section', 'the page lands in the settings dialog, not the plugins page')
+eq(moduleExports.SETTINGS_ORDER, 61, 'nav order sits right after notify')
+eq(moduleExports.SETTINGS_LABEL, 'Worktree', 'nav label is the plugin name, never a translated one')
+
+// 接线：软依赖开一个设置页子 scope（拿不到就静默不装，headless 组合照常）
+eq(settingsDeps.length, 1, 'apply() opens exactly one settings scope')
+eq(JSON.stringify(settingsDeps[0]), '["slots","configForms"]', 'the settings scope asks for slots + configForms')
+eq(settingsNamespace, 'dsh-worktree', 'the form is taken for the plugin entry id')
+eq(settingsEffects.length, 2, 'the settings page and the nav icon are each owned by an effect')
+eq(settingsEffects[0], 'dsh-worktree: settings page', 'the effect is labelled for debugging')
+eq(settingsEffects[1], 'dsh-worktree: settings nav icon', 'the nav icon watcher is owned by an effect too')
+eq(JSON.stringify(settingsServed.namespaces), '["dsh-worktree"]', 'the page waits for the host to serve its namespace')
+eq(settingsRegistrations.length, 0, 'nothing is registered while the host serves no such namespace')
+
+settingsServed.register(new Set(['dsh-worktree']))
+eq(JSON.stringify(settingsSlotInjects), '["settings.section"]', 'the page is injected into the settings section slot')
+eq(settingsRegistrations.length, 1, 'exactly one settings page')
+const settingsPage = settingsRegistrations[0]
+eq(settingsPage.registration.name, 'settings.section', 'registration targets the settings section slot')
+eq(settingsPage.registration.id, 'dsh-worktree', 'registration id is the namespace (drives the nav "only" filter)')
+eq(settingsPage.registration.order, 61, 'registration order')
+eq(settingsPage.registration.label(), 'Worktree', 'label is a thunk so a locale change can re-register')
+eq(settingsPage.component, moduleExports.WorktreeSettingsSection, 'the registered component is the settings section')
+const face = settingsPage.registration.inject()
+ok(face.hooks !== undefined, 'the inject face carries hooks', JSON.stringify(Object.keys(face)))
+ok(
+  face.hooks.worktreeSettings === face.settings,
+  'the hook source and the component share one model (otherwise it reads and writes different forms)',
+)
+ok(
+  typeof face.settings.getSnapshot === 'function' && typeof face.settings.subscribe === 'function',
+  'the model is a usable store (getSnapshot + subscribe)',
+)
+
+// ── 设置导航图标：settings.section 契约里没有 icon 字段 ────────────────────
+// shell 只从注册项投影 id / order / label，图标按 section id 从一个闭集里挑、其余回落通用齿轮，
+// 所以只能在对话框挂载后认领自己那一行、用 CSS 把齿轮换成 IconWorktree。
+// 假 document / MutationObserver 要挂到 sandbox 上：产物跑在 vm context 里，看不见宿主 global。
+const withNav = (run) => {
+  const marker = moduleExports.SETTINGS_NAV_ATTRIBUTE
+  const rows = []
+  const observers = []
+  const add = (text) => {
+    const attrs = new Set()
+    const row = {
+      textContent: text,
+      hasAttribute: (name) => attrs.has(name),
+      setAttribute: (name) => attrs.add(name),
+      removeAttribute: (name) => attrs.delete(name),
+      marked: () => attrs.has(marker),
+    }
+    rows.push(row)
+    return row
+  }
+  const fakeDocument = {
+    body: {},
+    querySelectorAll(selector) {
+      if (selector === '[role="dialog"] nav button') return rows
+      if (selector === '[' + marker + ']') return rows.filter((row) => row.marked())
+      return []
+    },
+  }
+  sandbox.document = fakeDocument
+  sandbox.MutationObserver = class {
+    constructor(callback) {
+      this.callback = callback
+      observers.push(this)
+    }
+    observe() {}
+    disconnect() {
+      this.disconnected = true
+    }
+  }
+  try {
+    return run({ add, observers, fakeDocument })
+  } finally {
+    delete sandbox.document
+    delete sandbox.MutationObserver
+  }
+}
+
+// 非浏览器环境必须空转（apply() 里那条 effect 就是在这个 suite 的环境下跑过的）
+const bareDisposer = moduleExports.registerSettingsNavIcon(() => 'Worktree')
+eq(typeof bareDisposer, 'function', 'the nav icon watcher returns a disposer even without a DOM')
+bareDisposer()
+
+withNav(({ add, observers }) => {
+  add('账号与余额')
+  const ours = add('Worktree')
+  add('模型')
+  const stop = moduleExports.registerSettingsNavIcon(() => 'Worktree')
+  eq(ours.marked(), true, 'the row whose label matches gets claimed')
+  eq(observers.length, 1, 'the watcher observes the dialog so re-renders are re-checked')
+  eq(observers[0].disconnected, undefined, 'the observer stays connected while the plugin is loaded')
+  stop()
+  eq(ours.marked(), false, 'the disposer hands the row back')
+  eq(observers[0].disconnected, true, 'the disposer stops observing')
+})
+
+withNav(({ add, fakeDocument }) => {
+  add('Worktree')
+  add('Worktree')
+  const stop = moduleExports.registerSettingsNavIcon(() => 'Worktree')
+  eq(
+    fakeDocument.querySelectorAll('[' + moduleExports.SETTINGS_NAV_ATTRIBUTE + ']').length,
+    0,
+    "an ambiguous label claims nothing (better the shell's gear than someone else's row)",
+  )
+  stop()
+})
+
+withNav(({ add }) => {
+  const other = add('模型')
+  add('Worktree')
+  const stop = moduleExports.registerSettingsNavIcon(() => '   ')
+  eq(other.marked(), false, 'a blank label claims nothing')
+  stop()
+})
+
+withNav(({ add, observers }) => {
+  const stop = moduleExports.registerSettingsNavIcon(() => 'Worktree')
+  const late = add('Worktree')
+  eq(late.marked(), false, 'a row that appears later waits for the observer')
+  observers[0].callback()
+  eq(late.marked(), true, 'the observer claims the row once the dialog re-renders')
+  stop()
+})
+
+// ── 渲染：元素树走查（没有真 React，useState 按序号预置） ─────────────────
+const settingsModel = new moduleExports.WorktreeSettingsModel(settingsForm)
+const renderSettings = (props) => {
+  stateIndex = 0
+  presets = []
+  stateSets = []
+  return expand(jsxNode(moduleExports.WorktreeSettingsSection, props))
+}
+const wiredProps = () => ({
+  useWorktreeSettings: (select) => select(settingsModel.getSnapshot()),
+  settings: settingsModel,
+})
+const switchesOf = (tree) => flatten(tree).filter((e) => e.kind === 'element' && e.type === 'switch')
+const inputsOf = (tree) => flatten(tree).filter((e) => e.kind === 'element' && e.type === 'Input')
+const textareasOf = (tree) => flatten(tree).filter((e) => e.kind === 'element' && e.type === 'textarea')
+
+const ready = renderSettings(wiredProps())
+eq(divsWithClass(ready, 'wt-set').length, 1, 'the page root carries its own settings class')
+eq(switchesOf(ready).length, 2, 'two toggles')
+eq(inputsOf(ready).length, 1, 'the root path is a single-line field')
+eq(textareasOf(ready).length, 3, 'the three templates are multi-line fields')
+eq(
+  JSON.stringify(switchesOf(ready).map((e) => e.props.label)),
+  JSON.stringify(['注册成独立项目', '写 .git/info/exclude']),
+  'each toggle carries its own label (the platform Switch only renders it as an aria name)',
+)
+eq(switchesOf(ready)[0].props.checked, true, 'the toggle shows the stored value')
+eq(switchesOf(ready)[0].props.disabled, false, 'writable settings leave the toggle live')
+eq(inputsOf(ready)[0].props.defaultValue, '.worktrees', 'the root path echoes the stored value')
+eq(inputsOf(ready)[0].props.placeholder, '.worktrees', 'the root path shows its default as a placeholder')
+eq(
+  JSON.stringify(textareasOf(ready).map((e) => e.props.defaultValue)),
+  JSON.stringify(['{compact} {name}', '{spaced}', '']),
+  'the templates echo their stored values',
+)
+eq(textareasOf(ready)[0].props.rows, 3, 'multi-line templates get a few rows')
+ok(has(allText(ready), '可用 {compact} {spaced} {name} {repo}'), 'the template placeholders are documented on the page')
+ok(
+  has(allText(ready), '路径与命名') && has(allText(ready), '交接消息') && has(allText(ready), '项目登记'),
+  'the three groups are titled',
+)
+
+// ── 交互：拨开关 / 失焦到底写了哪个字段 ───────────────────────────────────
+settingsWrites.length = 0
+switchesOf(ready)[1].props.onChange(false)
+eq(JSON.stringify(settingsWrites), JSON.stringify([['set', 'writeExclude', false]]), 'flipping a toggle writes that field')
+
+settingsWrites.length = 0
+textareasOf(ready)[0].props.onBlur({ target: { value: '  {compact} {name}  ' } })
+eq(settingsWrites.length, 0, 'a text field that did not change writes nothing (trim first)')
+
+textareasOf(ready)[0].props.onBlur({ target: { value: '{name}' } })
+eq(
+  JSON.stringify(settingsWrites),
+  JSON.stringify([['set', 'titleTemplate', '{name}']]),
+  'a changed text field writes the trimmed value',
+)
+
+settingsWrites.length = 0
+textareasOf(ready)[1].props.onBlur({ target: { value: '   ' } })
+eq(
+  JSON.stringify(settingsWrites),
+  JSON.stringify([['unset', 'sessionTitleTemplate']]),
+  'clearing a field unsets it, so the schema default comes back',
+)
+
+// ── 模型本身（不经过渲染的那几条） ───────────────────────────────────────
+settingsWrites.length = 0
+eq(settingsModel.commitText('handoffTemplate', '   '), undefined, 'clearing an already-empty field is not a write')
+eq(settingsWrites.length, 0, 'and nothing reached the form')
+settingsModel.setToggle('registerProject', false)
+eq(
+  JSON.stringify(settingsWrites),
+  JSON.stringify([['set', 'registerProject', false]]),
+  'the model writes toggles by field name',
+)
+settingsWrites.length = 0
+settingsModel.commitText('worktreeRoot', 'other/root')
+eq(
+  JSON.stringify(settingsWrites),
+  JSON.stringify([['set', 'worktreeRoot', 'other/root']]),
+  'the model writes text by field name',
+)
+
+// ── 三种"没表单可画"的降级 ────────────────────────────────────────────────
+settingsOverrides = { status: 'loading', value: undefined }
+const loading = renderSettings(wiredProps())
+eq(switchesOf(loading).length, 0, 'nothing to toggle while the form is loading')
+ok(has(allText(loading), '正在读取设置'), 'loading says so instead of showing an empty form')
+
+settingsOverrides = { status: 'unavailable', value: undefined }
+const unavailable = renderSettings(wiredProps())
+eq(switchesOf(unavailable).length, 0, 'nothing to toggle when the host does not serve the namespace')
+ok(has(allText(unavailable), '没在运行'), 'an unserved namespace is explained')
+
+settingsOverrides = {}
+const noProps = renderSettings({})
+ok(has(allText(noProps), '没拿到平台表单'), 'a missing inject face explains itself instead of crashing')
+
+settingsOverrides = { writable: false }
+const readOnly = renderSettings(wiredProps())
+eq(switchesOf(readOnly)[0].props.disabled, true, 'read-only settings disable the toggles')
+eq(inputsOf(readOnly)[0].props.disabled, true, 'read-only settings disable the text fields')
+ok(has(allText(readOnly), '只读'), 'read-only is explained on the page')
+settingsOverrides = {}
 
 clickChecks()
   .then(remoteCheckChecks)

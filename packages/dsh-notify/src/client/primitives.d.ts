@@ -7,7 +7,12 @@
 // 的瞬时横幅，装不下这个插件的四种形态（最多 4 条堆栈、20s 常驻等用户动作、多行体检块、
 // 整卡可点跳会话）。组件层复用 Button / Tag / Icon* 这几个真正契合的就够了。
 declare module '@deepseek-ai/dsh-client-ui-primitives' {
-  import type { ButtonHTMLAttributes, ReactElement, ReactNode } from 'react'
+  import type {
+    ButtonHTMLAttributes,
+    InputHTMLAttributes,
+    ReactElement,
+    ReactNode,
+  } from 'react'
 
   /** 按钮视觉族，各自对应一组 --dsw-alias-button-* token */
   export type ButtonVariant = 'primary' | 'ghost' | 'outline' | 'toolbar'
@@ -29,6 +34,30 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
     className?: string
     children?: ReactNode
   }): ReactElement
+
+  /**
+   * 开关：渲染成 `<button role="switch">`，`label` 只当 aria-label（不显示文字，所以标签得自己画），
+   * `onChange` 直接给下一个值。
+   */
+  export function Switch(props: {
+    checked: boolean
+    onChange: (next: boolean) => void
+    label: string
+    disabled?: boolean
+    title?: string
+    className?: string
+  }): ReactElement
+
+  /**
+   * 单行输入：外面套一层 span（className 落在 span 上），其余 props 透传给原生 `<input>`
+   * —— 所以 id / placeholder / defaultValue / onBlur 都能直接用。没有多行形态。
+   */
+  export function Input(
+    props: {
+      icon?: ReactNode
+      className?: string
+    } & InputHTMLAttributes<HTMLInputElement>,
+  ): ReactElement
 
   /** 产品图标：size 默认各自绘制尺寸，颜色随 currentColor */
   export interface IconProps {

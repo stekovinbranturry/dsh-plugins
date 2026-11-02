@@ -159,3 +159,118 @@
   corner-shape: round;
   color: var(--dsw-alias-label-tertiary);
 }
+
+/* ── 设置页（DSH 设置对话框里的一页）─────────────────────────────────────────
+   这一页渲染在设置面板的内容列里，所以只做纵向分组与行内对齐；开关/输入框的观感由
+   primitives 自己给，配色一律走 --dsw-* 语义 token。类名沿用 nt- 前缀。 */
+.nt-set {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.nt-set-intro {
+  margin: 0;
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.nt-set-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.nt-set-group-title {
+  margin: 0 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* 一行偏好：左边文案，右边开关。行间用分隔线，跟 DSH 的偏好列表观感一致 */
+.nt-set-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--dsw-alias-border-l4);
+}
+
+.nt-set-row:last-child {
+  border-bottom: none;
+}
+
+.nt-set-row-main {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.nt-set-label {
+  font-size: 13px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.nt-set-hint {
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* 文本框一行一个：label 在上，控件占满宽度 */
+.nt-set-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--dsw-alias-border-l4);
+}
+
+.nt-set-field:last-child {
+  border-bottom: none;
+}
+
+.nt-set-textarea {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-module-platform);
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.nt-set-textarea:focus-visible {
+  outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color);
+  outline-offset: 1px;
+}
+
+/* 导航契约不支持 icon，只在本插件认领的导航项上用 mask 替换齿轮。
+   mask 跟随 currentColor；不改原按钮的名称、焦点或点击行为。 */
+[data-dsh-notify-settings-nav] > svg:first-child {
+  display: none;
+}
+
+[data-dsh-notify-settings-nav]::before {
+  content: '';
+  flex: none;
+  width: 16px;
+  height: 16px;
+  background: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+.nt-set-note,
+.nt-set-status {
+  margin: 0;
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+}

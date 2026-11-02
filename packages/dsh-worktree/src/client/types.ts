@@ -37,25 +37,76 @@ export interface UiWorkspaceService {
   openSession(sessionId: string): void
 }
 
-/** 插槽注册：只用到 name/id/order/registrant */
+/** 插槽注册：只用到 name/id/order/registrant + 设置页要的 label/inject */
 export interface SlotRegistration {
   name: string
   id: string
   order?: number
   registrant?: string
+  /** 导航文案。**函数**：切换语言时注册方重新注册一次，shell 不必订阅 locale */
+  label?: () => string
+  /**
+   * 注入面：渲染器把返回值里除 hooks/keyedHooks 外的键原样变成组件 props，
+   * `hooks` 里的每个键变成 `use<首字母大写>` 的选择器 hook（源只要有 getSnapshot/subscribe）。
+   */
+  inject?: () => unknown
 }
 
 export interface SlotsService {
-  /** 第二个参数是占用者组件：平台会带 ownerProps + 标准 props 调用它 */
-  register(registration: SlotRegistration, component: (props: SlotStandardProps) => unknown): () => void
+  /**
+   * 第二个参数是占用者组件：平台会带 ownerProps + 标准 props 调用它。
+   * props 类型由占用者自己声明 —— 侧边栏入口吃 SlotStandardProps，设置页吃自己的
+   * inject 面（hooks + settings），两者形状不同，所以这里对 props 泛型化。
+   */
+  register<P>(registration: SlotRegistration, component: (props: P) => unknown): () => void
   inject(name: string, callback: () => () => void): () => void
 }
 
-/** 浏览器半的 ctx：只需要 effect / get / slots（uiWorkspace 走 get，不进门控） */
+/** 一个插件条目的设置表单快照（@deepseek-ai/dsh-client-ui-settings 的 ConfigForm 子集） */
+export interface ConfigFormSnapshot<T> {
+  status: 'loading' | 'ready' | 'unavailable'
+  value: T | undefined
+  /** 清空该字段后回落到的值 */
+  base: unknown
+  /** presence 才表示被用户覆盖过（等于默认值也算覆盖） */
+  user: unknown
+  /** 写围栏：写的时候带上，冲突时被拒 */
+  revision: number | undefined
+  writable: boolean
+}
+
+/**
+ * 某个设置命名空间（= profile 插件条目 id）的表单句柄。
+ *
+ * set/unset 内部串行排队、带 revision 围栏，被拒时返回 false 而不是抛 —— 调用方只要把
+ * false 翻成一句提示即可，不用自己重试。subscribe 的 listener 不带参数，要自己读快照。
+ */
+export interface ConfigForm<T> {
+  getSnapshot(): ConfigFormSnapshot<T>
+  subscribe(listener: () => void): () => void
+  set(field: string, value: unknown): Promise<boolean>
+  unset(field: string): Promise<boolean>
+}
+
+export interface ConfigFormsService {
+  get<T>(entryId: string): ConfigForm<T>
+  /**
+   * 宿主开始服务其中任一命名空间才注册，全没了就撤销 —— 这是"部署里没有这个宿主插件
+   * 就一点痕迹都不留"的标准姿势。要用 ctx.effect 包住。
+   */
+  whileServed(namespaces: readonly string[], register: (served: ReadonlySet<string>) => () => void): () => void
+}
+
+/** 浏览器半的 ctx：只需要 effect / get / slots / inject（uiWorkspace 走 get，不进门控） */
 export interface ClientContext {
   effect(callback: () => void | (() => void), label?: string): unknown
   /** 平台服务查找：`get` 不要求声明 inject（属性访问才要求） */
   get(name: string): unknown
+  /**
+   * 软依赖：deps 齐了才跑 callback（给一个子 scope）。静态 inject 只放"没有它插件就没意义"
+   * 的服务，其余走这里降级 —— headless / SDK 组合照样能装。
+   */
+  inject(deps: string[], callback: (scope: ClientContext) => void): unknown
   slots: SlotsService
 }
 

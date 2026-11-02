@@ -31,9 +31,43 @@ const icon = (name) => (props) => {
   })
 }
 
+// 开关：照真实实现的结构 —— <button type="button" role="switch" aria-checked aria-label>，
+// label 只当 aria-label（不渲染文字），onChange 收到的是下一个值。
+const Switch = (props) => {
+  const { checked, onChange, label, disabled, title, className } = props || {}
+  return React.createElement(
+    'button',
+    {
+      type: 'button',
+      role: 'switch',
+      'aria-checked': checked,
+      'aria-label': label,
+      ...(title === undefined ? {} : { title }),
+      ...(disabled === undefined ? {} : { disabled }),
+      ...(className === undefined ? {} : { className }),
+      onClick: () => onChange(!checked),
+    },
+    React.createElement('span', null),
+  )
+}
+
+// 输入框：照真实实现的结构 —— 外面一层 span（className 落在 span 上），里面是原生 input，
+// 其余 props 全部透传。测试靠"展开后是 input"断言用的是 primitives 的 Input。
+const Input = (props) => {
+  const { icon: leading, className, ...rest } = props || {}
+  return React.createElement(
+    'span',
+    { ...(className === undefined ? {} : { className }) },
+    leading === undefined ? null : React.createElement('span', null, leading),
+    React.createElement('input', rest),
+  )
+}
+
 module.exports = {
   Button: passthrough('button'),
   Tag: passthrough('span'),
+  Switch,
+  Input,
   IconCheckCircleOutlineRegular: icon('IconCheckCircleOutlineRegular'),
   IconShieldOutlineRegular: icon('IconShieldOutlineRegular'),
   IconQuestionOutlineRegular: icon('IconQuestionOutlineRegular'),

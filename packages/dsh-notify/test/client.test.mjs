@@ -199,6 +199,7 @@ const sessionsStub = {
     }),
   },
 }
+const settingsInjectCalls = []
 const applyCtx = {
   effect(callback) {
     const dispose = callback()
@@ -208,6 +209,13 @@ const applyCtx = {
   get: (key) => {
     if (key === 'uiWorkspace') return uiWorkspace
     if (key === 'sessions') return sessionsStub
+    return undefined
+  },
+  // 设置页走软依赖：apply 必须自己 inject(['slots','configForms'])。
+  // 这里只记录它要了什么；拿不到服务的分支（scope.get 全 undefined）正好也走一遍。
+  inject(deps, callback) {
+    settingsInjectCalls.push(deps)
+    callback({ effect: () => undefined, get: () => undefined, inject: () => undefined })
     return undefined
   },
 }
@@ -221,6 +229,11 @@ eq(opened[0].url, '/dsh-notify/stream', 'the stream uses the default endpoint wh
 eq(globalThis.window.__dshNotifyTest !== undefined, true, 'apply() exposes the console self-test hook')
 check(typeof globalThis.window.__dshNotifyAsk === 'function', 'apply() exposes the permission hook')
 check(windowListeners.has('pointerdown'), 'apply() arms the first-gesture permission request')
+check(
+  settingsInjectCalls.some((deps) => deps.includes('slots') && deps.includes('configForms')),
+  'apply() 用软依赖要了 slots / configForms（设置页的座位）',
+)
+eq(settingsInjectCalls.length, 1, 'apply() 只开一个设置页子 scope')
 
 // 跳回对话：0.1.7 走 uiWorkspace.openSession（sessions.open 已经不存在了）
 eq(globalThis.window.__dshNotifyOpen('sess-1'), true, 'the self-test hook can jump back to a session')
@@ -295,11 +308,23 @@ stream.emit('notify', {
 })
 eq(roots[0].rendered.length > rendersBeforeCurrent, true, '别的对话：照旧弹')
 
+// 真实 apply 接线：hello/config 必须改变已运行控制器，而不是仍读启动 meta。
+const liveStore = roots[0].rendered.at(-1).props.store
+const channelFrame = (channels) => ({ data: JSON.stringify({ ok: true, endpoint: stream.url, channels }) })
+stream.emit('hello', channelFrame({ ack: false, browser: false, sound: false, title: false }))
+const cardsBeforeDisable = liveStore.getState().items.length
+stream.emit('notify', { data: JSON.stringify({ seq: 4, kind: 'approval', title: 'muted', sessionId: 'sess-other' }) })
+eq(liveStore.getState().items.length, cardsBeforeDisable, 'apply 的 hello 渠道更新立即关闭新提示条')
+stream.emit('config', channelFrame({ ack: true, browser: false, sound: false, title: false }))
+stream.emit('notify', { data: JSON.stringify({ seq: 5, kind: 'approval', title: 'enabled', sessionId: 'sess-other' }) })
+eq(liveStore.getState().items.length, cardsBeforeDisable + 1, 'apply 的 config 渠道更新立即恢复新提示条')
+
 // 断流 / 卸载路径不该抛
 stream.emit('error', {})
 for (const dispose of disposers) dispose()
 check(roots[0].unmounted === true, 'disposing the plugin unmounts the React root')
 check(stream.closed === true, 'disposing the plugin closes the stream')
+eq(Object.keys(stream.handlers).length, 0, 'disposing removes notify/config/hello/status listeners')
 check(globalThis.window.__dshNotifyTest === undefined, 'disposing removes the console hook')
 
 // ── 2. 纯逻辑 ─────────────────────────────────────────────────────────────
@@ -317,6 +342,45 @@ const wire = (over) => ({
   turn: { turn: 3, status: 'completed', elapsedMs: 65_000, reply: 'done' },
   ...over,
 })
+
+// SSE 单帧校验：坏配置不能部分生效；下一帧仍可恢复，重连 hello 同样生效。
+{
+  const configs = []
+  const notifications = []
+  const statuses = []
+  const handle = logic.openStream('/live', (value) => notifications.push(value), (value) => statuses.push(value), (value) => configs.push(value))
+  const source = opened.at(-1)
+  const off = { ack: false, browser: false, sound: false, title: false }
+  source.emit('hello', channelFrame(off))
+  eq(configs.length, 1, 'openStream 消费初始 hello 渠道快照')
+  for (const raw of ['{', 'null', '[]', '{}', JSON.stringify({ channels: null }), JSON.stringify({ channels: { ...off, sound: 'false' } }), JSON.stringify({ channels: { ack: true } })]) {
+    source.emit('config', { data: raw })
+  }
+  eq(configs.length, 1, '坏 JSON、错误类型和不完整渠道帧全部丢弃')
+  source.emit('config', channelFrame({ ...off, sound: true }))
+  eq(configs.at(-1).sound, true, '坏帧之后的有效 config 仍然生效')
+  source.emit('hello', channelFrame({ ...off, browser: true }))
+  eq(configs.at(-1).browser, true, '重连 hello 会覆盖旧渠道')
+  source.emit('notify', { data: '{' })
+  source.emit('notify', { data: JSON.stringify(wire({ seq: 500 })) })
+  eq(notifications.length, 1, '配置同步不影响 notify 坏帧隔离')
+  source.emit('open', {})
+  source.emit('error', {})
+  eq(statuses.join(','), 'open,error', '流状态回调照常分发')
+  const pending = { ...source.handlers }
+  handle.close()
+  handle.close()
+  eq(Object.keys(source.handlers).length, 0, 'close 清掉全部事件监听且可重复调用')
+  check(source.closed, 'close 关闭 EventSource')
+  pending.hello(channelFrame(off))
+  pending.config(channelFrame(off))
+  pending.notify({ data: JSON.stringify(wire({ seq: 501 })) })
+  pending.open()
+  pending.error()
+  eq(configs.length, 3, 'close 后排队的渠道帧不再调用业务回调')
+  eq(notifications.length, 1, 'close 后排队的通知帧不再调用业务回调')
+  eq(statuses.length, 2, 'close 后排队的状态回调不再分发')
+}
 
 const store = logic.createStore()
 eq(store.getState().items.length, 0, 'store starts empty')
@@ -396,6 +460,72 @@ visible.notify(wire({ seq: 10 }))
 eq(visible.store.getState().items.length, 1, 'ack=true shows the card')
 eq(logic.TOAST_TTL.approval > logic.TOAST_TTL['turn-end'], true, 'approval cards live longer than completion cards')
 
+// 同一个控制器不刷新页面：四个渠道都能关后再开，关闭 title 立即清掉已有标记。
+{
+  const previousAudio = globalThis.AudioContext
+  const previousVisibility = globalThis.document.visibilityState
+  const previousTitle = globalThis.document.title
+  const previousPermission = NotificationStub.permission
+  let tones = 0
+  globalThis.AudioContext = class {
+    currentTime = 0
+    state = 'running'
+    destination = {}
+    createOscillator() {
+      return { frequency: {}, connect() {}, start() { tones++ }, stop() {} }
+    }
+    createGain() {
+      return { gain: { setValueAtTime() {}, exponentialRampToValueAtTime() {} }, connect() {} }
+    }
+  }
+  logic.resetTitleMarker()
+  globalThis.document.title = 'Live channels'
+  globalThis.document.visibilityState = 'hidden'
+  NotificationStub.permission = 'granted'
+  const all = { ack: true, browser: true, sound: true, title: true }
+  const initialMeta = { endpoint: '/live', channels: { ...all } }
+  const live = logic.createController({ meta: initialMeta })
+  try {
+    const browserBefore = NotificationStub.instances.length
+    live.notify(wire({ seq: 100 }))
+    eq(live.store.getState().items.length, 1, '动态控制器初始 ack 开启')
+    eq(tones, 2, '初始 sound 播放双音')
+    eq(NotificationStub.instances.length, browserBefore + 1, '初始 browser 创建系统通知')
+    eq(globalThis.document.title, logic.TITLE_PREFIX + 'Live channels', '初始 title 显示标记')
+    live.updateChannels({ ack: false, browser: false, sound: false, title: false })
+    eq(globalThis.document.title, 'Live channels', '关闭 title 立即移除现有标记')
+    live.notify(wire({ seq: 101 }))
+    eq(live.store.getState().items.length, 1, '关闭 ack 后新通知不再堆卡片')
+    eq(tones, 2, '关闭 sound 后新通知不再响')
+    eq(NotificationStub.instances.length, browserBefore + 1, '关闭 browser 后不再创建系统通知')
+    eq(globalThis.document.title, 'Live channels', '关闭 title 后新通知不再标记')
+    eq(initialMeta.channels.ack, true, '动态渠道不修改初始 meta 快照')
+    live.updateChannels({ ...all, ack: false, sound: false, title: false })
+    live.notify(wire({ seq: 102 }))
+    eq(NotificationStub.instances.length, browserBefore + 2, 'browser 可独立重新开启')
+    eq(tones, 2, '仅恢复 browser 不会打开 sound')
+    live.updateChannels({ ...all, browser: false })
+    live.notify(wire({ seq: 103 }))
+    eq(live.store.getState().items.length, 2, 'ack 重新开启后恢复提示条')
+    eq(tones, 4, 'sound 重新开启后恢复双音')
+    eq(globalThis.document.title, logic.TITLE_PREFIX + 'Live channels', 'title 重新开启后恢复新通知标记')
+    eq(NotificationStub.instances.length, browserBefore + 2, '独立关闭 browser 不影响其他渠道')
+    live.dispose()
+    live.updateChannels({ ack: false, browser: false, sound: false, title: false })
+    eq(live.channels.ack, true, 'dispose 后不再接受渠道更新')
+    live.notify(wire({ seq: 104 }))
+    eq(tones, 4, 'dispose 后排队通知没有音效副作用')
+    eq(live.store.getState().items.length, 2, 'dispose 后排队通知不再新增卡片')
+  } finally {
+    live.dispose()
+    logic.resetTitleMarker()
+    globalThis.document.title = previousTitle
+    globalThis.document.visibilityState = previousVisibility
+    NotificationStub.permission = previousPermission
+    globalThis.AudioContext = previousAudio
+  }
+}
+
 // 当前对话不通知：人正看着这个对话，回复/审批卡就在屏幕上，再弹一条是噪音。
 // 只在页面可见时压制 —— 切走了"在对话里"这个前提就不成立了，还得照常叫你。
 const visibleMeta = { endpoint: '/dsh-notify/stream', channels: { ack: true, browser: false, sound: false, title: true } }
@@ -458,6 +588,67 @@ eq(dismissCalls, 1, '跳完顺手收掉这条')
 let laterDismissed = 0
 eq(logic.activateCard(false, { onDismiss: () => laterDismissed++ }), false, '不能跳的卡片：点击不做任何事（也就不会误收）')
 eq(laterDismissed, 0, '不能跳的卡片不会被点掉')
+
+// 卡片上那个「打开会话」按钮必须和"点卡片"一样：跳过去顺手收掉这条。
+// 这里曾经漏接过 —— 按钮直接接了 onOpen，只跳不收，卡片要杵到 TTL 到点
+// （approval / question 是 20 秒），用户看到的就是"点了打开会话 toast 不消失"。
+//
+// 元素树里 primitives 的 Button 是组件元素（type 是函数），展开一层才落到 <button>；
+// 替身只做透传，所以"展开后是 button"正好当"这确实是 Button"的证据。
+const buttonByLabel = (node, label) => {
+  let hit = null
+  const walk = (el) => {
+    if (hit !== null || el === null || typeof el !== 'object') return
+    if (Array.isArray(el)) {
+      for (const item of el) walk(item)
+      return
+    }
+    if (el.props && el.props.children === label) {
+      hit = el
+      return
+    }
+    if (el.props) walk(el.props.children)
+  }
+  walk(node)
+  return hit
+}
+const hostTag = (el) => (typeof el.type === 'function' ? el.type(el.props).type : el.type)
+
+let openButtonCalls = 0
+let dismissButtonCalls = 0
+const cardElement = logic.ToastCard({
+  wire: wire({ seq: 31, sessionId: 'sess-1' }),
+  onOpen: () => openButtonCalls++,
+  onDismiss: () => dismissButtonCalls++,
+})
+const openButton = buttonByLabel(cardElement, '打开会话')
+check(openButton !== null, '能跳的卡片渲染出「打开会话」按钮')
+eq(hostTag(openButton), 'button', '「打开会话」用的是 primitives 的 Button')
+openButton.props.onClick()
+eq(openButtonCalls, 1, '点「打开会话」跳回那个对话')
+eq(dismissButtonCalls, 1, '点「打开会话」也把这条收掉（不然要等 TTL 到点）')
+
+// 同一个卡片上的「稍后」仍然只是收掉，不该顺手跳会话
+let laterOpenCalls = 0
+let laterCloseCalls = 0
+const laterElement = logic.ToastCard({
+  wire: wire({ seq: 32, sessionId: 'sess-1' }),
+  onOpen: () => laterOpenCalls++,
+  onDismiss: () => laterCloseCalls++,
+})
+const laterButton = buttonByLabel(laterElement, '稍后')
+check(laterButton !== null, '能跳的卡片渲染出「稍后」按钮')
+laterButton.props.onClick()
+eq(laterCloseCalls, 1, '点「稍后」收掉这条')
+eq(laterOpenCalls, 0, '点「稍后」不跳会话')
+
+// 没有跳转入口（拿不到 uiWorkspace）时不给按钮，卡片也不能被点掉
+const plainElement = logic.ToastCard({
+  wire: wire({ seq: 33, sessionId: 'sess-1' }),
+  onDismiss: () => laterDismissed++,
+})
+eq(buttonByLabel(plainElement, '打开会话'), null, '不能跳时不给「打开会话」按钮')
+check(buttonByLabel(plainElement, '知道了') !== null, '不能跳时按钮文案退回「知道了」')
 
 const selfTest = logic.createController({
   meta: { endpoint: '/dsh-notify/stream', channels: { ack: true, browser: false, sound: false, title: false } },
@@ -550,5 +741,300 @@ selfTest.dispose()
 
 eq(logic.KIND_TITLE['turn-end'], '会话完成', 'kind titles are localised')
 visible.dispose()
+
+
+// ── 5. 设置页 ────────────────────────────────────────────────────────────
+// 本版 DSH 没有客户端自动表单渲染器，设置页是插件自己注册的（座位 settings.section）。
+// 这里分四层钉住：字段与宿主对账、纯函数、表单模型写哪一笔、以及真的渲染出什么 HTML。
+console.log('\n== 设置页 ==')
+
+const React = require('react')
+const ReactDOMServer = require('react-dom/server')
+
+/** eq 只做 ===，结构化比较用这个 */
+const deepEq = (actual, expected, label) =>
+  check(
+    JSON.stringify(actual) === JSON.stringify(expected),
+    label,
+    'got ' + JSON.stringify(actual) + ', want ' + JSON.stringify(expected),
+  )
+
+// 跨半对账：设置页覆盖的字段必须与宿主 Config 一模一样。
+// 以前这类"加了配置项忘了接上某一半"没有任何东西拦得住。
+const hostConfig = await import(path.join(ROOT, 'dist', 'host', 'config.js'))
+deepEq(
+  [...logic.SETTINGS_FIELDS].sort(),
+  Object.keys(hostConfig.Config.dict).sort(),
+  '设置页覆盖宿主 Config 的全部字段（一个不多一个不少）',
+)
+eq(logic.SETTINGS_NS, 'dsh-notify', '命名空间是 profile 条目 id，不是包名')
+eq(logic.SETTINGS_SECTION, 'settings.section', '注册进设置对话框的座位')
+eq(logic.SETTINGS_ORDER, 60, 'order 避开官方已占用的 -10/0/10/15/20')
+eq(logic.SETTINGS_LABEL, '通知', '导航文案')
+
+// 附加请求头的文本格式：每行 key=value，# 开头与空行忽略
+deepEq(logic.parseHeaders('A=1\n\n# 注释\nB = 2 \n没有等号\n=3'), { A: '1', B: '2' }, 'parseHeaders 只吃合法行')
+deepEq(logic.parseHeaders('X=a=b'), { X: 'a=b' }, 'parseHeaders 只切第一个 =（值里的 = 保留）')
+eq(logic.formatHeaders({ A: '1', B: '2' }), 'A=1\nB=2', 'formatHeaders 每行一条')
+eq(logic.formatHeaders(undefined), '', 'formatHeaders 容忍 undefined')
+eq(logic.sameHeaders({ A: '1' }, { A: '1' }), true, 'sameHeaders 相等')
+eq(logic.sameHeaders({ A: '1' }, { A: '1', B: '2' }), false, 'sameHeaders 数量不同即不同')
+eq(logic.sameHeaders({ A: '1' }, undefined), false, 'sameHeaders 容忍 undefined')
+
+const settingsView = {
+  notifyOnTurnEnd: true,
+  notifyOnApproval: true,
+  notifyOnQuestion: true,
+  includeSubagents: false,
+  browser: true,
+  ack: true,
+  sound: false,
+  title: false,
+  showPreview: true,
+  webhookUrl: 'https://hook.example',
+  webhookHeaders: { Authorization: 'Bearer t' },
+}
+
+const writes = []
+const fakeForm = (value, overrides = {}) => ({
+  getSnapshot: () => ({
+    status: 'ready',
+    value,
+    base: undefined,
+    user: undefined,
+    revision: 7,
+    writable: true,
+    ...overrides,
+  }),
+  subscribe: () => () => undefined,
+  set: (field, next) => {
+    writes.push(['set', field, next])
+    return Promise.resolve(true)
+  },
+  unset: (field) => {
+    writes.push(['unset', field])
+    return Promise.resolve(true)
+  },
+})
+
+// 渲染器把 hooks 源包成选择器 hook（useSyncExternalStoreWithSelector），所以模型必须有
+// getSnapshot / subscribe —— 少一个，设置页在真机上就是一片空白
+const model = new logic.NotifySettingsModel(fakeForm({ ...settingsView }))
+eq(typeof model.getSnapshot, 'function', '模型给渲染器当 hooks 源：有 getSnapshot')
+eq(typeof model.subscribe, 'function', '模型给渲染器当 hooks 源：有 subscribe')
+eq(model.getSnapshot().value.webhookUrl, 'https://hook.example', '模型透传快照')
+
+await model.setToggle('ack', false)
+deepEq(writes.at(-1), ['set', 'ack', false], '拨开关写它自己的字段')
+
+writes.length = 0
+eq(model.commitUrl('  https://hook.example  '), undefined, '转发地址没变就不写')
+eq(writes.length, 0, '没变时一次写都没发生')
+eq(await model.commitUrl('https://new.example'), true, '转发地址变了就写')
+deepEq(writes.at(-1), ['set', 'webhookUrl', 'https://new.example'], '转发地址写的是 trim 后的值')
+eq(await model.commitUrl('   '), true, '转发地址清空也提交')
+deepEq(writes.at(-1), ['unset', 'webhookUrl'], '清空转发地址走 unset（回落默认，而不是写空串）')
+
+writes.length = 0
+eq(model.commitHeaders('Authorization=Bearer t'), undefined, '请求头没变就不写')
+eq(writes.length, 0, '请求头没变时一次写都没发生')
+eq(await model.commitHeaders('Authorization=Bearer t\nX-Env=dev'), true, '请求头变了就写')
+deepEq(
+  writes.at(-1),
+  ['set', 'webhookHeaders', { Authorization: 'Bearer t', 'X-Env': 'dev' }],
+  '请求头按解析结果写对象',
+)
+eq(await model.commitHeaders(' \n# 只剩注释\n'), true, '请求头清空也提交')
+deepEq(writes.at(-1), ['unset', 'webhookHeaders'], '清空请求头走 unset')
+
+// 真渲染：NotifySettingsForm 里有 hooks，不能像 ToastCard 那样当普通函数调，
+// 所以走 react-dom/server 断言真实 HTML。
+const renderSection = (props) => ReactDOMServer.renderToStaticMarkup(React.createElement(logic.NotifySettingsSection, props))
+const readyHtml = renderSection({
+  useNotifySettings: (select) => select(fakeForm({ ...settingsView }).getSnapshot()),
+  settings: model,
+})
+
+const switchTags = (html) => html.match(/<button[^>]*>/g) ?? []
+const switchFor = (html, label) => switchTags(html).find((tag) => tag.includes(`aria-label="${label}"`))
+
+const allToggles = [...logic.TIMING_TOGGLES, ...logic.CHANNEL_TOGGLES, ...logic.CONTENT_TOGGLES]
+eq(allToggles.length, 9, '布尔开关共 9 个')
+eq(switchTags(readyHtml).length, 9, '9 个开关都渲染成 role=switch 的按钮')
+check(
+  allToggles.every((spec) => switchFor(readyHtml, spec.label) !== undefined),
+  '每个开关都带自己的无障碍名',
+  allToggles.map((spec) => spec.label).join('/'),
+)
+check(
+  switchFor(readyHtml, '子代理也算').includes('aria-checked="false"'),
+  '开关状态跟着宿主配置走（includeSubagents 默认关）',
+  switchFor(readyHtml, '子代理也算'),
+)
+check(switchFor(readyHtml, '回合结束').includes('aria-checked="true"'), '开着的开关 aria-checked=true')
+check(!switchFor(readyHtml, '回合结束').includes('disabled'), '可写时开关不置灰')
+check(readyHtml.includes('value="https://hook.example"'), '转发地址回显在输入框里')
+check(readyHtml.includes('Authorization=Bearer t'), '附加请求头回显在多行框里')
+
+const readOnlyHtml = renderSection({
+  useNotifySettings: (select) => select(fakeForm({ ...settingsView }, { writable: false }).getSnapshot()),
+  settings: model,
+})
+check(switchFor(readOnlyHtml, '回合结束').includes('disabled'), '只读部署里开关置灰')
+check(readOnlyHtml.includes('只读'), '只读部署给一句解释', readOnlyHtml.slice(0, 200))
+
+const loadingHtml = renderSection({
+  useNotifySettings: (select) => select(fakeForm(undefined, { status: 'loading' }).getSnapshot()),
+  settings: model,
+})
+eq(switchTags(loadingHtml).length, 0, '还没读到设置时不渲染表单')
+check(loadingHtml.includes('正在读取设置'), '读取中给一句提示')
+
+const offHtml = renderSection({
+  useNotifySettings: (select) => select(fakeForm(undefined, { status: 'unavailable' }).getSnapshot()),
+  settings: model,
+})
+check(offHtml.includes('没在运行'), '插件没跑时给一句提示', offHtml)
+
+// 拿不到平台表单（宿主版本不对）时不能整页崩掉
+const bareHtml = renderSection({})
+check(bareHtml.includes('没拿到平台表单'), '缺 props 时降级成一句提示而不是崩', bareHtml)
+
+// 接线：两道门都得过 —— whileServed 管"宿主有没有服务这个命名空间"，
+// slots.inject 管"设置对话框有没有声明这个座位"
+console.log('\n== 设置页接线 ==')
+const depsSeen = []
+const effectsSeen = []
+const slotInjects = []
+const registered = []
+let served = null
+const slotsStub = {
+  register: (registration, component) => {
+    registered.push({ registration, component })
+    return () => undefined
+  },
+  inject: (name, callback) => {
+    slotInjects.push(name)
+    return callback()
+  },
+}
+const configFormsStub = {
+  get: (ns) => {
+    eq(ns, logic.SETTINGS_NS, '取表单用的是设置命名空间')
+    return fakeForm({ ...settingsView })
+  },
+  whileServed: (namespaces, register) => {
+    served = { namespaces, register }
+    return () => undefined
+  },
+}
+const scopeStub = {
+  effect: (callback, label) => {
+    effectsSeen.push(label)
+    return callback()
+  },
+  get: (name) => (name === 'slots' ? slotsStub : name === 'configForms' ? configFormsStub : undefined),
+  inject: () => undefined,
+}
+logic.installSettingsSection({
+  inject: (deps, callback) => {
+    depsSeen.push(deps)
+    callback(scopeStub)
+    return undefined
+  },
+})
+
+deepEq(depsSeen[0], ['slots', 'configForms'], '设置页走软依赖（headless 组合照常装）')
+deepEq(served?.namespaces, [logic.SETTINGS_NS], '只认自己那个命名空间')
+check(effectsSeen.includes('dsh-notify: settings page'), '注册被 ctx.effect 包住（能随插件卸载）', effectsSeen.join('/'))
+eq(registered.length, 0, '宿主还没服务这个命名空间时什么都不注册')
+
+served.register(new Set([logic.SETTINGS_NS]))
+deepEq(slotInjects, [logic.SETTINGS_SECTION], '宿主服务后才往 settings.section 里注入')
+eq(registered.length, 1, '注册了一页')
+eq(registered[0].component, logic.NotifySettingsSection, '注册的组件就是设置页')
+eq(registered[0].registration.name, logic.SETTINGS_SECTION, '注册项的 name 与座位一致')
+eq(registered[0].registration.id, logic.SETTINGS_NS, '注册项的 id 就是命名空间（导航用它去重）')
+eq(registered[0].registration.order, logic.SETTINGS_ORDER, '注册项的 order')
+eq(registered[0].registration.label(), logic.SETTINGS_LABEL, 'label 是 thunk（切语言时重新注册）')
+const face = registered[0].registration.inject()
+check(face.settings instanceof logic.NotifySettingsModel, 'inject 面里带上表单模型')
+// hooks 是渲染器唯一的入口：没有它，页面拿不到 useNotifySettings，整页就是那句降级提示
+check(face.hooks !== undefined, 'inject 面里带 hooks', JSON.stringify(Object.keys(face)))
+check(
+  face.hooks?.notifySettings === face.settings,
+  'hooks 源与组件拿到的模型是同一个（否则读了不写、写了不读）',
+)
+
+// 平台服务缺失时不能抛
+let missingThrew = false
+try {
+  logic.installSettingsSection({
+    inject: (deps, callback) => {
+      callback({ effect: () => undefined, get: () => undefined, inject: () => undefined })
+      return undefined
+    },
+  })
+} catch {
+  missingThrew = true
+}
+eq(missingThrew, false, '拿不到 slots/configForms 时不抛（降级成没有设置页）')
+
+// 设置导航图标：唯一命中、晚挂载、同名冲突与卸载清理。
+check(effectsSeen.includes('dsh-notify: settings nav icon'), '导航图标由 effect 管理')
+const savedDocument = globalThis.document
+const savedObserver = globalThis.MutationObserver
+try {
+  const rows = []
+  const marker = logic.SETTINGS_NAV_ATTRIBUTE
+  const add = (textContent) => {
+    const attributes = new Set()
+    const row = {
+      textContent,
+      hasAttribute: (key) => attributes.has(key),
+      setAttribute: (key) => attributes.add(key),
+      removeAttribute: (key) => attributes.delete(key),
+    }
+    rows.push(row)
+    return row
+  }
+  let observer
+  globalThis.document = {
+    body: {},
+    querySelectorAll: (selector) => selector === '[role="dialog"] nav button'
+      ? rows : rows.filter((row) => row.hasAttribute(marker)),
+  }
+  globalThis.MutationObserver = class {
+    constructor(callback) { this.callback = callback; observer = this }
+    observe() {}
+    disconnect() { this.disconnected = true }
+  }
+  const stop = logic.registerSettingsNavIcon(() => '通知')
+  const unrelated = add('Worktree')
+  const ours = add('通知')
+  observer.callback()
+  eq(ours.hasAttribute(marker), true, '晚挂载的通知导航项会被认领')
+  eq(unrelated.hasAttribute(marker), false, '不会改动其他导航项')
+  const duplicate = add('通知')
+  observer.callback()
+  eq(ours.hasAttribute(marker), false, '出现同名冲突时撤销标记')
+  eq(duplicate.hasAttribute(marker), false, '不认领歧义项')
+  rows.pop()
+  observer.callback()
+  eq(ours.hasAttribute(marker), true, '唯一项恢复后重新认领')
+  stop()
+  eq(ours.hasAttribute(marker), false, '卸载时清除标记')
+  eq(observer.disconnected, true, '卸载时停止观察 DOM')
+  observer.callback()
+  eq(ours.hasAttribute(marker), false, '卸载后排队回调不再认领')
+  delete globalThis.document
+  const noDomStop = logic.registerSettingsNavIcon(() => '通知')
+  eq(typeof noDomStop, 'function', '非浏览器环境安全降级')
+  noDomStop()
+} finally {
+  globalThis.document = savedDocument
+  if (savedObserver === undefined) delete globalThis.MutationObserver
+  else globalThis.MutationObserver = savedObserver
+}
 
 report('client.test')
